@@ -2,8 +2,12 @@
 
 設計の要点:
 
-* スコアは「選手項 + ペア項 + 試合項 + ラウンド項」に分解できるので、
-  出場者の組合せごとに編成を全列挙しても十分速い。近似は使わない。
+* **1試合ずつ作って、順にコートへ流し込む。** コート数に依存しない構造にしてある。
+  1ラウンドを全コートまとめて全列挙すると、コート数の指数で組合せが爆発する
+  （8人なら315通りだが、12人では155,925通り、16人ではさらにその数百倍）。
+* スコアは1試合ごとのコストの和に **厳密に** 分解できる。
+  「出場しなかった人への減点」は「出場した人への加点」に置き換えられる
+  （両者の合計はそのラウンドでは定数なので）。近似ではなく等価な変形。
 * 1ラウンドだけを見た貪欲な選択は、その先で組める相手を減らしてしまうことがある。
   そこで上位候補について数ラウンド先までロールアウトし、累積コストで選び直す。
 * 公平性は候補集合を絞るハードな枠として効かせ、その枠内で「ばらけ」を最適化する。
@@ -19,9 +23,8 @@ import heapq
 import math
 import random
 import struct
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import cache
 from itertools import combinations
 
 from app.errors import NotEnoughPlayersError
@@ -39,6 +42,17 @@ from app.scheduler.domain import (
 
 PLAYERS_PER_MATCH = 4
 PLAYERS_PER_TEAM = 2
+
+#: 4人を1試合にするときのペアの分け方。3通りしかない。
+PAIRINGS_OF_FOUR = (((0, 1), (2, 3)), ((0, 2), (1, 3)), ((0, 3), (1, 2)))
+
+#: 1ラウンドの組み分けを探すとき、各段で残す候補数。
+#: 8人（2面）なら分け方は35通りしかないので、この値で全通りが残り厳密になる。
+#: 3面以上では刈り込みが入るが、コート数が増えても計算量は破綻しない。
+BATCH_BEAM = 64
+
+#: 先読みの中での組み分け探索はもっと粗くてよい。
+ROLLOUT_BATCH_BEAM = 16
 
 #: ロールアウト中に評価する出場者集合の上限。先読みは本番の選択ほど精密でなくてよい。
 ROLLOUT_CANDIDATE_SETS = 6
@@ -64,10 +78,13 @@ _GENDER_PENALTY: dict[tuple[PairKind, PairKind], int] = {
 _SPLIT_GENDERS = (PairKind.FF, PairKind.MM)
 
 Pair = tuple[int, int]
-"""ペア。出場者を id の昇順に並べたときの添字2つ、または member_id 2つ。"""
+"""ペア。member_id 2つを昇順に並べたもの。"""
 
-Arrangement = tuple[tuple[Pair, Pair], ...]
-"""1ラウンドの編成。試合ごとに (ペア, ペア)。"""
+Group = tuple[int, int, int, int]
+"""1試合に出る4人。member_id を昇順に並べたもの。"""
+
+Batch = tuple[Group, ...]
+"""1ラウンド分の組み分け。コートに流し込む順に並んでいる。"""
 
 
 # ---------------------------------------------------------------------------
@@ -103,11 +120,6 @@ def normalize_players(players: Sequence[PlayerStat], seed: int) -> list[PlayerSt
     return sorted(players, key=lambda p: tie_key(seed, p.id))
 
 
-# ---------------------------------------------------------------------------
-# 編成の列挙
-# ---------------------------------------------------------------------------
-
-
 def _pair_kind(a: PlayerStat, b: PlayerStat) -> PairKind:
     """ペアの男女構成。
 
@@ -133,44 +145,6 @@ def gender_cost(kind_a: PairKind, kind_b: PairKind, weights: Weights) -> int:
     if key == _SPLIT_GENDERS:
         return weights.gender_split
     return weights.gender * _GENDER_PENALTY[key]
-
-
-def _pairings(members: tuple[int, ...]) -> Iterator[tuple[Pair, ...]]:
-    """メンバーをペアに分割する全パターン。8人なら 105 通り。"""
-    if not members:
-        yield ()
-        return
-    first, rest = members[0], members[1:]
-    for i, partner in enumerate(rest):
-        remaining = rest[:i] + rest[i + 1 :]
-        head = pair_key(first, partner)
-        for tail in _pairings(remaining):
-            yield (head, *tail)
-
-
-def _group_into_matches(pairs: tuple[Pair, ...]) -> Iterator[Arrangement]:
-    """ペアを2つずつ組にして試合にする全パターン。4ペアなら 3 通り。"""
-    if not pairs:
-        yield ()
-        return
-    first, rest = pairs[0], pairs[1:]
-    for i, opponent in enumerate(rest):
-        remaining = rest[:i] + rest[i + 1 :]
-        for tail in _group_into_matches(remaining):
-            yield ((first, opponent), *tail)
-
-
-@cache
-def index_arrangements(n: int) -> tuple[Arrangement, ...]:
-    """位置(0〜n-1)に対する編成の全パターン。8人なら 105 x 3 = 315 通り。
-
-    人数が同じなら形は同じなので使い回す。出場者の id を昇順に並べてから
-    この添字を当てれば、ペアは常に昇順になり、正規化のためのソートが要らない。
-    """
-    arrangements = []
-    for pairs in _pairings(tuple(range(n))):
-        arrangements.extend(_group_into_matches(pairs))
-    return tuple(arrangements)
 
 
 # ---------------------------------------------------------------------------
@@ -215,14 +189,15 @@ class _State:
 
     def apply(
         self,
-        arrangement: Arrangement,
-        playing: frozenset[int],
+        pairings: Sequence[tuple[Pair, Pair]],
         active_ids: Sequence[int],
         beginners: frozenset[int],
     ) -> None:
         """1ラウンドぶん進める。"""
-        for pair_a, pair_b in arrangement:
+        playing: set[int] = set()
+        for pair_a, pair_b in pairings:
             for team in (pair_a, pair_b):
+                playing.update(team)
                 self.partner[team] = self.partner.get(team, 0) + 1
                 first, second = team
                 if (first in beginners) != (second in beginners):
@@ -249,10 +224,50 @@ class _State:
 # ---------------------------------------------------------------------------
 
 
+def player_costs(
+    active: Sequence[PlayerStat], state: _State, weights: Weights
+) -> dict[int, int]:
+    """その人を出場させることの得失。小さいほど出したい。
+
+    仕様の優先度2（参加回数の公平）・3（連続不参加を短く）・7（休み明けを優先）は、
+    本来「出さなかった人への減点」として書ける。ただしそのラウンドで出す人数は
+    決まっているので、出場者と非出場者の減点の合計は定数になる。
+    そこで符号を反転して「出場者への加点」にまとめ直してある。
+    こうすると評価を1試合ごとに分解でき、コート数に依存しない探索ができる。
+
+    ただし符号を反転した分の定数は :func:`benched_baseline` で足し戻すこと。
+    1ラウンドの中では定数なので順位は変わらないが、先読みでは分岐ごとに
+    状態（＝この定数）が変わるため、落とすと累積コストの比較が狂う。
+    """
+    w = weights
+    costs: dict[int, int] = {}
+    for player in active:
+        cost = w.fair * (2 * state.adjusted[player.id] + 1)
+        cost -= w.sit_out * (state.sit_out_streak[player.id] + 1) ** 2
+        if player.id in state.just_returned:
+            cost -= w.just_returned
+        costs[player.id] = cost
+    return costs
+
+
+def benched_baseline(
+    active: Sequence[PlayerStat], state: _State, weights: Weights
+) -> int:
+    """:func:`player_costs` で符号を反転した分の定数。
+
+    「非出場者への減点」の合計は、出場者と非出場者の両方を足した値から
+    出場者ぶんを引いたもの。前者がこの定数にあたる。
+    """
+    w = weights
+    total = sum(w.sit_out * (state.sit_out_streak[p.id] + 1) ** 2 for p in active)
+    total += sum(w.just_returned for p in active if p.id in state.just_returned)
+    return total
+
+
 class _Scorer:
     """ペア単位・試合単位のコストを計算する。
 
-    これらのコストは「誰が出るか」には依存せず、履歴と2人（または2ペア）だけで決まる。
+    これらのコストは「誰が出るか」には依存せず、履歴と2人（または4人）だけで決まる。
     そのため1ラウンドの探索につき1度だけ作り、すべての候補集合で使い回す。
     """
 
@@ -261,10 +276,16 @@ class _Scorer:
         players: Sequence[PlayerStat],
         state: _State,
         weights: Weights,
+        *,
+        rng: random.Random,
+        avoid_matches: frozenset = frozenset(),
     ) -> None:
         self._state = state
         self._weights = weights
+        self._rng = rng
+        self._avoid_matches = avoid_matches
         self._match_cost_cache: dict[tuple[Pair, Pair], int] = {}
+        self._group_cache: dict[Group, tuple[int, tuple[Pair, Pair]]] = {}
 
         self.pair_cost: dict[Pair, int] = {}
         self.pair_kind: dict[Pair, PairKind] = {}
@@ -310,28 +331,49 @@ class _Scorer:
         )
         # 優先度6: 男女ペア同士のマッチが望ましい。
         cost += gender_cost(self.pair_kind[pair_a], self.pair_kind[pair_b], w)
+        # スキップされた試合をそのまま出さない。
+        if key in self._avoid_matches:
+            cost += w.avoid_match
 
         self._match_cost_cache[key] = cost
         return cost
 
+    def group_cost(self, group: Group) -> tuple[int, tuple[Pair, Pair]]:
+        """4人を1試合にしたときの最小コストと、そのときのペア分け。
 
-def _selection_cost(
-    selected: Sequence[PlayerStat],
-    benched: Sequence[PlayerStat],
-    state: _State,
-    weights: Weights,
-) -> int:
-    """誰を出すかだけで決まるコスト。編成によらない。"""
-    w = weights
-    # 優先度2: 参加回数の公平性。
-    # ラウンドで増える出場数は固定なので、出場後の adjusted の分散を最小化することは
-    # 「出場者の (2 * adjusted + 1) の和」の最小化と等価になる。
-    cost = sum(w.fair * (2 * state.adjusted[p.id] + 1) for p in selected)
-    # 優先度3: 連続してマッチに入れない回数を最小にする。二乗で強く効かせる。
-    cost += sum(w.sit_out * (state.sit_out_streak[p.id] + 1) ** 2 for p in benched)
-    # 優先度7: 休み明けはなるべく早く入れる。効き目は小さくてよい。
-    cost += sum(w.just_returned for p in benched if p.id in state.just_returned)
-    return cost
+        ペアの分け方は3通りしかないので、ここで決めてしまってよい。
+        どう分けても他の試合には影響しないため、全体の最適解を損なわない。
+        """
+        cached = self._group_cache.get(group)
+        if cached is not None:
+            return cached
+
+        best_cost: int | None = None
+        best_pairing: tuple[Pair, Pair] | None = None
+        ties = 0
+        for (i, j), (k, m) in PAIRINGS_OF_FOUR:
+            # group は昇順なので、そのまま並べればペアも昇順になる。
+            pair_a: Pair = (group[i], group[j])
+            pair_b: Pair = (group[k], group[m])
+            cost = self.pair_cost[pair_a] + self.pair_cost[pair_b]
+            cost += self.match_cost(pair_a, pair_b)
+            # 優先度5: 初心者を含むペア同士でマッチを組む。
+            # 「片側だけに初心者がいる試合」に減点することで、初心者2名を
+            # 同じ試合の対面に置く編成が、1名だけ出す編成より良いと評価される。
+            if self.pair_has_beginner[pair_a] + self.pair_has_beginner[pair_b] == 1:
+                cost += self._weights.beginner_concentration
+
+            if best_cost is None or cost < best_cost:
+                best_cost, best_pairing, ties = cost, (pair_a, pair_b), 1
+            elif cost == best_cost:
+                ties += 1
+                if self._rng.randrange(ties) == 0:
+                    best_pairing = (pair_a, pair_b)
+
+        assert best_cost is not None and best_pairing is not None
+        result = (best_cost, best_pairing)
+        self._group_cache[group] = result
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -387,28 +429,74 @@ def _candidate_sets(
     return sets
 
 
-Candidate = tuple[int, tuple[int, ...], Arrangement]
-"""(スコア, 出場者idの昇順タプル, 添字による編成)。"""
+def split_into_matches(
+    ids: Sequence[int],
+    n_matches: int,
+    scorer: _Scorer,
+    *,
+    beam_width: int = BATCH_BEAM,
+) -> list[tuple[int, Batch]]:
+    """出場者を n_matches 個の4人組に分ける。安い順に返す。
+
+    「まだ使っていない中で先頭の人」を必ず次の組に入れることで、
+    同じ分け方を数え直さずに済む。それでも全通りは 8人で35、12人で5,775、
+    16人で262万と増えるので、1試合決めるごとに安い順へ刈り込む。
+    8人（2面）なら35通りすべてが残るため、よく使う構成では厳密な最小解になる。
+    """
+    total = len(ids)
+    states: list[tuple[int, Batch, int]] = [(0, (), 0)]  # コスト, 組み分け, 使用済みビット
+
+    for _ in range(n_matches):
+        nxt: list[tuple[int, Batch, int]] = []
+        for cost, groups, used in states:
+            first = next(i for i in range(total) if not used >> i & 1)
+            rest = [i for i in range(first + 1, total) if not used >> i & 1]
+            for combo in combinations(rest, PLAYERS_PER_MATCH - 1):
+                indexes = (first, *combo)
+                group: Group = tuple(ids[i] for i in indexes)  # type: ignore[assignment]
+                group_cost, _pairing = scorer.group_cost(group)
+                mask = used
+                for i in indexes:
+                    mask |= 1 << i
+                nxt.append((cost + group_cost, (*groups, group), mask))
+        states = nxt if len(nxt) <= beam_width else heapq.nsmallest(beam_width, nxt)
+
+    return [(cost, groups) for cost, groups, _used in states]
 
 
-def _best_candidates(
+# ---------------------------------------------------------------------------
+# 先読み（ロールアウト）
+# ---------------------------------------------------------------------------
+
+Candidate = tuple[int, Batch]
+"""(スコア, 組み分け)。"""
+
+
+def _pairings_of(batch: Batch, scorer: _Scorer) -> list[tuple[Pair, Pair]]:
+    return [scorer.group_cost(group)[1] for group in batch]
+
+
+def _round_signature(batch: Batch, scorer: _Scorer) -> tuple:
+    """コートの入れ替えを無視した、ラウンド全体の編成の署名。"""
+    return tuple(sorted(tuple(sorted(pairing)) for pairing in _pairings_of(batch, scorer)))
+
+
+def _plan_round(
     active: Sequence[PlayerStat],
     state: _State,
     weights: Weights,
     *,
-    n_slots: int,
+    n_matches: int,
     fairness_slack: int,
     max_candidate_sets: int,
     rng: random.Random,
-    avoid_rounds: frozenset,
-    avoid_matches: frozenset,
     keep: int,
-) -> list[Candidate]:
-    """スコアの小さい順に候補を ``keep`` 件返す。
-
-    同点のときに先頭を採らないよう、並べ替えのキーに乱数を混ぜる。
-    こうすると同点集合からの一様抽選になり、かつ上位候補も偏りなく集まる。
-    """
+    batch_beam: int = BATCH_BEAM,
+    avoid_rounds: frozenset = frozenset(),
+    avoid_matches: frozenset = frozenset(),
+) -> tuple[list[Candidate], _Scorer]:
+    """1ラウンド分の組み分けを、安い順に ``keep`` 件返す。"""
+    n_slots = n_matches * PLAYERS_PER_MATCH
     must, flexible, total = _split_candidates(active, state, n_slots, fairness_slack)
     candidate_sets = _candidate_sets(
         must,
@@ -419,84 +507,35 @@ def _best_candidates(
         rng=rng,
     )
 
-    scorer = _Scorer(active, state, weights)
-    arrangements = index_arrangements(n_slots)
-    check_avoid = bool(avoid_rounds or avoid_matches)
-    beginner_concentration = weights.beginner_concentration
+    scorer = _Scorer(active, state, weights, rng=rng, avoid_matches=avoid_matches)
+    costs = player_costs(active, state, weights)
+    baseline = benched_baseline(active, state, weights)
 
-    scored: list[tuple[int, int, tuple[int, ...], Arrangement]] = []
+    scored: list[tuple[int, int, Batch]] = []
     for selected in candidate_sets:
-        selected_ids = {p.id for p in selected}
-        benched = [p for p in active if p.id not in selected_ids]
-        base = _selection_cost(selected, benched, state, weights)
-
-        # 出場者を id 昇順に並べ、添字ペア -> コストの表を作る。
-        # 以降の内側ループは小さな辞書引きと整数演算だけになる。
-        ids = tuple(sorted(selected_ids))
-        pair_cost: dict[Pair, int] = {}
-        has_beginner: dict[Pair, int] = {}
-        for i in range(n_slots):
-            for j in range(i + 1, n_slots):
-                key = (ids[i], ids[j])
-                pair_cost[(i, j)] = scorer.pair_cost[key]
-                has_beginner[(i, j)] = scorer.pair_has_beginner[key]
-        match_cost: dict[tuple[Pair, Pair], int] = {}
-
-        for arrangement in arrangements:
-            score = base
-            lonely_beginner_matches = 0
-            for index_pair_a, index_pair_b in arrangement:
-                score += pair_cost[index_pair_a] + pair_cost[index_pair_b]
-                cached = match_cost.get((index_pair_a, index_pair_b))
-                if cached is None:
-                    cached = scorer.match_cost(
-                        (ids[index_pair_a[0]], ids[index_pair_a[1]]),
-                        (ids[index_pair_b[0]], ids[index_pair_b[1]]),
-                    )
-                    match_cost[(index_pair_a, index_pair_b)] = cached
-                score += cached
-                if has_beginner[index_pair_a] + has_beginner[index_pair_b] == 1:
-                    lonely_beginner_matches += 1
-            # 優先度5: 初心者を含むペア同士でマッチを組む。
-            # 「片側だけに初心者がいる試合」を数えることで、初心者2名を同じ試合の
-            # 対面に置く編成が、初心者1名だけを出す編成より良いと評価される。
-            score += beginner_concentration * lonely_beginner_matches
-
-            if check_avoid:
-                # スキップされた編成を繰り返さない。
-                match_sigs = _match_signatures(ids, arrangement)
-                if match_sigs in avoid_rounds:
-                    score += weights.avoid_round
-                score += weights.avoid_match * sum(1 for sig in match_sigs if sig in avoid_matches)
-
-            scored.append((score, rng.getrandbits(32), ids, arrangement))
+        ids = tuple(sorted(p.id for p in selected))
+        base = baseline + sum(costs[member_id] for member_id in ids)
+        for cost, batch in split_into_matches(
+            ids, n_matches, scorer, beam_width=batch_beam
+        ):
+            score = base + cost
+            if avoid_rounds and _round_signature(batch, scorer) in avoid_rounds:
+                score += weights.avoid_round
+            # 同点は先頭を採らない。並べ替えのキーに乱数を混ぜて一様抽選にする。
+            scored.append((score, rng.getrandbits(32), batch))
 
     best = heapq.nsmallest(keep, scored)
-    return [(score, ids, arrangement) for score, _key, ids, arrangement in best]
-
-
-def _match_signatures(ids: tuple[int, ...], arrangement: Arrangement) -> tuple:
-    """コートの入れ替えを無視した、試合ごとの署名。"""
-    return tuple(
-        sorted(
-            tuple(sorted(((ids[a], ids[b]), (ids[c], ids[d]))))
-            for (a, b), (c, d) in arrangement
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# 先読み（ロールアウト）
-# ---------------------------------------------------------------------------
+    return [(score, batch) for score, _key, batch in best], scorer
 
 
 def _rollout_cost(
     candidate: Candidate,
+    scorer: _Scorer,
     active: Sequence[PlayerStat],
     state: _State,
     weights: Weights,
     *,
-    n_slots: int,
+    n_matches: int,
     fairness_slack: int,
     depth: int,
     seed: int,
@@ -511,38 +550,29 @@ def _rollout_cost(
     先読みの乱数は候補ごとに同じ種から作る。同じ運の下で比べるため
     （共通乱数法）で、候補間の差が乱数のぶれに埋もれないようにする。
     """
-    score, ids, arrangement = candidate
+    score, batch = candidate
     rollout_state = state.copy()
-    playing = frozenset(ids)
-    arrangement_ids = tuple(
-        ((ids[a], ids[b]), (ids[c], ids[d])) for (a, b), (c, d) in arrangement
-    )
-    rollout_state.apply(arrangement_ids, playing, active_ids, beginners)
+    rollout_state.apply(_pairings_of(batch, scorer), active_ids, beginners)
 
     total = score
     rng = random.Random(seed)
     for _ in range(depth):
-        following = _best_candidates(
+        following, next_scorer = _plan_round(
             active,
             rollout_state,
             weights,
-            n_slots=n_slots,
+            n_matches=n_matches,
             fairness_slack=fairness_slack,
             max_candidate_sets=ROLLOUT_CANDIDATE_SETS,
             rng=rng,
-            avoid_rounds=frozenset(),
-            avoid_matches=frozenset(),
             keep=1,
+            batch_beam=ROLLOUT_BATCH_BEAM,
         )
         if not following:
             break
-        next_score, next_ids, next_arrangement = following[0]
+        next_score, next_batch = following[0]
         total += next_score
-        next_pairs = tuple(
-            ((next_ids[a], next_ids[b]), (next_ids[c], next_ids[d]))
-            for (a, b), (c, d) in next_arrangement
-        )
-        rollout_state.apply(next_pairs, frozenset(next_ids), active_ids, beginners)
+        rollout_state.apply(_pairings_of(next_batch, next_scorer), active_ids, beginners)
     return total
 
 
@@ -552,8 +582,8 @@ def _rollout_cost(
 
 
 def _build_round_plan(
-    arrangement: Arrangement,
-    ids: tuple[int, ...],
+    batch: Batch,
+    scorer: _Scorer,
     benched: Sequence[PlayerStat],
     resting: Sequence[PlayerStat],
     *,
@@ -561,19 +591,19 @@ def _build_round_plan(
     score: int,
     rng: random.Random,
 ) -> RoundPlan:
-    """採用した編成を RoundPlan に変換する。
+    """組み分けをコートに流し込んで RoundPlan にする。
 
-    使うコートは court_index の小さい方から詰める（会場で迷わせないため）。
-    どの編成をどのコートに置くか、チームの左右、ペア内の並びはシャッフルする
+    使うコートは先頭から順に埋める（会場で迷わせないため）。
+    どの試合をどのコートに置くか、チームの左右、ペア内の並びはシャッフルする
     （強い人がいつも左、登録が早い人がいつも先頭、を防ぐ）。
     """
-    matches = [((ids[a], ids[b]), (ids[c], ids[d])) for (a, b), (c, d) in arrangement]
-    if len(matches) > 1:
-        rng.shuffle(matches)
+    pairings = _pairings_of(batch, scorer)
+    if len(pairings) > 1:
+        rng.shuffle(pairings)
 
     plans: list[MatchPlan] = []
     playing: list[int] = []
-    for court_index, (pair_a, pair_b) in enumerate(matches):
+    for court_index, (pair_a, pair_b) in enumerate(pairings):
         teams = [list(pair_a), list(pair_b)]
         if rng.random() < 0.5:
             teams.reverse()
@@ -615,7 +645,7 @@ def generate_round(
     Args:
         players: 練習会のメンバー全員（``LEFT`` は無視される）。
         history: これまでの採用ラウンドから導出した履歴。
-        court_count: 練習会が持つコート数。人数が足りなければ一部は使わない。
+        court_count: 試合に使えるコート数。人数が足りなければ一部は使わない。
         seed: 練習会の乱数シード。並び順の正規化に使う。
         rng: 生成1回分の乱数生成器。:func:`make_rng` で作る。
         weights: スコアの重み。
@@ -623,9 +653,8 @@ def generate_round(
             候補に含めてよいか。既定の 0 は厳密公平。
         max_candidate_sets: 評価する出場者集合の上限。
         lookahead: 何ラウンド先まで読むか。0 なら1ラウンドだけを見る貪欲法。
-            既定の 1 で、ペアと対戦の重複の理論超過が貪欲法より約4割少なくなる。
-            2 以上に深くしても改善しない（先の手の読みが粗いため）。
-        beam: 先読みで比べる上位候補の数。16 より増やしても改善しなかった。
+            既定の 1 で、ペアと対戦の重複の理論超過が貪欲法より約1割少なくなる。
+        beam: 先読みで比べる上位候補の数。
         avoid: 避けたい編成の署名（``RoundPlan.signature()``）。スキップ時に渡す。
 
     Raises:
@@ -636,43 +665,49 @@ def generate_round(
     active = [p for p in normalized if p.status is MemberStatus.ACTIVE]
     resting = [p for p in normalized if p.status is MemberStatus.RESTING]
 
-    used_courts = min(court_count, len(active) // PLAYERS_PER_MATCH)
-    if used_courts < 1:
+    n_matches = min(court_count, len(active) // PLAYERS_PER_MATCH)
+    if n_matches < 1:
         raise NotEnoughPlayersError(
             f"マッチを組むには4人以上必要です（出場可能なメンバーは{len(active)}人）"
         )
-    n_slots = used_courts * PLAYERS_PER_MATCH
+
+    # コート数が増えると1ラウンドの組み分けが一気に増えるので、
+    # 探索の幅を絞って所要時間を抑える。よく使う2面までは絞らない。
+    spread = max(1, (n_matches - 1) ** 2)
+    effective_sets = max(4, max_candidate_sets // spread)
+    effective_beam = max(4, beam // max(1, n_matches - 1))
 
     state = _State.from_history(active, history)
     avoid_rounds = frozenset(tuple(sig) for sig in avoid)
     avoid_matches = frozenset(match_sig for sig in avoid for match_sig in sig)
 
-    candidates = _best_candidates(
+    candidates, scorer = _plan_round(
         active,
         state,
         weights,
-        n_slots=n_slots,
+        n_matches=n_matches,
         fairness_slack=fairness_slack,
-        max_candidate_sets=max_candidate_sets,
+        max_candidate_sets=effective_sets,
         rng=rng,
+        keep=effective_beam if lookahead > 0 else 1,
         avoid_rounds=avoid_rounds,
         avoid_matches=avoid_matches,
-        keep=beam if lookahead > 0 else 1,
     )
 
     if lookahead > 0 and len(candidates) > 1:
         active_ids = tuple(p.id for p in active)
         beginners = frozenset(p.id for p in active if p.is_beginner)
         rollout_seed = rng.getrandbits(63)
-        best_index = min(
+        chosen = min(
             range(len(candidates)),
             key=lambda i: (
                 _rollout_cost(
                     candidates[i],
+                    scorer,
                     active,
                     state,
                     weights,
-                    n_slots=n_slots,
+                    n_matches=n_matches,
                     fairness_slack=fairness_slack,
                     depth=lookahead,
                     seed=rollout_seed,
@@ -682,17 +717,16 @@ def generate_round(
                 i,
             ),
         )
-        chosen = candidates[best_index]
+        score, batch = candidates[chosen]
     else:
-        chosen = candidates[0]
+        score, batch = candidates[0]
 
-    score, ids, arrangement = chosen
-    selected_ids = set(ids)
+    selected_ids = {member_id for group in batch for member_id in group}
     benched = [p for p in active if p.id not in selected_ids]
 
     return _build_round_plan(
-        arrangement,
-        ids,
+        batch,
+        scorer,
         benched,
         resting,
         court_count=court_count,

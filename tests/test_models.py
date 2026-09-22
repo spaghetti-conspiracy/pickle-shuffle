@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
+    Court,
     Match,
     MatchSlot,
     Member,
@@ -24,19 +25,56 @@ from app.scheduler.domain import (
 )
 
 
-def _make_session(db, name: str = "練習会") -> PracticeSession:
+def _make_session(db, name: str = "練習会", court_count: int = 2) -> PracticeSession:
     s = PracticeSession(name=name)
     db.add(s)
+    db.flush()
+    db.add_all(
+        [
+            Court(session_id=s.id, court_index=i, name=f"コート{i + 1}")
+            for i in range(court_count)
+        ]
+    )
     db.commit()
     return s
 
 
 def test_practice_session_defaults(db):
     s = _make_session(db)
-    assert s.court_count == 2
-    assert s.court_names == ["コート1", "コート2"]
-    assert s.rotation == 0
     assert s.random_seed > 0
+    assert [c.name for c in s.courts] == ["コート1", "コート2"]
+    assert all(c.in_use for c in s.courts), "作成直後はすべて試合に使う"
+
+
+def test_courts_can_be_taken_out_of_play_and_brought_back(db):
+    """初心者の育成用に、コートを試合から外したり戻したりできる。"""
+    s = _make_session(db, court_count=3)
+    practice_court = s.courts[2]
+    practice_court.in_use = False
+    db.commit()
+    db.expire_all()
+
+    reloaded = db.scalars(select(PracticeSession)).one()
+    assert [c.in_use for c in reloaded.courts] == [True, True, False]
+
+    reloaded.courts[2].in_use = True
+    db.commit()
+    assert all(c.in_use for c in reloaded.courts)
+
+
+def test_court_index_is_unique_within_a_session(db):
+    s = _make_session(db)
+    db.add(Court(session_id=s.id, court_index=0, name="重複"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_courts_are_deleted_with_the_session(db):
+    s = _make_session(db, court_count=3)
+    db.delete(s)
+    db.commit()
+    assert db.scalars(select(Court)).all() == []
 
 
 def test_each_session_gets_its_own_seed(db):
@@ -77,7 +115,7 @@ def test_round_tree_cascade_within_session(db):
     rnd = Round(session_id=s.id, status=RoundStatus.PENDING)
     db.add(rnd)
     db.commit()
-    match = Match(round_id=rnd.id, court_index=0)
+    match = Match(round_id=rnd.id, court_id=s.courts[0].id)
     db.add(match)
     db.commit()
     db.add_all(

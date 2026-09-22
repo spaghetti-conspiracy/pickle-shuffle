@@ -33,13 +33,15 @@
 | 項目 | 決定 |
 |---|---|
 | 技術スタック | Python 3.11 + FastAPI + SQLAlchemy 2.0 + SQLite、フロントは素の HTML/CSS/JS（ビルド不要） |
-| DB 差し替え | `DATABASE_URL` 環境変数で切替。既定 `sqlite:///./data/app.db`。ORM のみ使用し SQLite 固有機能を使わない |
+| DB | PostgreSQL。ローカルは docker compose が DB コンテナごと立ち上げ、Vercel は Neon を使う。`DATABASE_URL` で切替でき SQLite でも動く（テストはインメモリ SQLite） |
+| デプロイ先 | Vercel（サーバーレス関数 + Neon Postgres）。手元の PC では docker compose |
 | ボタン挙動 | 「開始」= 採用（参加回数に反映） / 「スキップ」= 不採用のまま再生成 / 試合後「次のマッチ」で次を生成 |
 | 性別 | `male` / `female` / `other`。`other` はミックス扱いで減点しない |
 | レベル | 3種を保存（`beginner` / `racket_experienced` / `pickleball`）。生成ロジック上は後者2つを同一視 |
 | メンバー並び順 | 手動並べ替えは実装しない |
 | 練習会 | 複数作成・切替可。記録破棄用の削除ボタンあり |
-| コート数 | 2面固定（データモデル上は可変にしておく） |
+| コート数 | 練習会の作成時に最大数を指定（既定2）。途中で個々のコートを試合用から外す/戻すことができる |
+| コートを外す理由 | 初心者の育成用の練習コートにするため。コーチングする経験者も試合から外れる。外れるメンバーは休憩扱い |
 | クライアント構成 | 管理画面と表示画面は別端末から同時アクセスする前提 |
 | メンバー変更の反映 | 登録画面で確定した時点で DB に反映。マッチへの反映は次の生成時。表示中のカードは自動で変えない |
 | 乱数シード | 練習会の作成時に固定シードを採番して保存。以降の非決定性はすべてこのシードから導出 |
@@ -159,7 +161,7 @@
 
 - [x] `CLAUDE.md`（開発規則）
 - [x] `PLAN.md`（本ファイル）
-- [ ] ユーザーレビューと合意
+- [x] ユーザーレビューと合意
 
 **DoD**: ユーザーが両ファイルをレビューし、合意が取れること。
 
@@ -167,15 +169,15 @@
 
 ### Phase 1: プロジェクト雛形とコンテナ
 
-- [ ] `pyproject.toml` — 依存: fastapi, uvicorn[standard], sqlalchemy>=2, pydantic>=2 /
+- [x] `pyproject.toml` — 依存: fastapi, uvicorn[standard], sqlalchemy>=2, pydantic>=2 /
       dev: pytest, httpx, ruff / optional `postgres`: psycopg[binary]
-- [ ] `Dockerfile` — python:3.11-slim、非 root ユーザ、`pip install .`
-- [ ] `docker-compose.yml` — `8000:8000`、`./data:/app/data`、`DATABASE_URL` を env で注入、
-      **差し替え例として postgres サービスをコメントアウトで同梱**
-- [ ] `app/config.py` — `Settings`（`DATABASE_URL`, `PORT`, スコア重み一式,
-      `fairness_slack_max`=1, `min_candidate_sets`=8, `max_candidate_sets`=60）
-- [ ] `app/db.py` — engine / sessionmaker / `Base` / `get_db`。SQLite は `check_same_thread=False`
-- [ ] `app/main.py` — 起動時 `create_all`、`/api` ルータ、`StaticFiles` で `app/static` を配信
+- [x] `Dockerfile` — python:3.11-slim、非 root ユーザ、`pip install ".[postgres]"`
+- [x] `docker-compose.yml` — web + PostgreSQL。Vercel と同じ DB にして
+      「ローカルでは動くのに本番で壊れる」を防ぐ
+- [x] `app/config.py` — `Settings`（`DATABASE_URL`, `PORT`, スコア重み一式,
+      `fairness_slack`=0, `lookahead`=1, `beam`=16, `max_candidate_sets`=60）
+- [x] `app/db.py` — engine / sessionmaker / `Base` / `get_db`。SQLite は `check_same_thread=False`
+- [x] `app/main.py` — 起動時 `create_all`、`/api` ルータ、`StaticFiles` で `app/static` を配信
 
 **DoD**: `docker compose up` 後 `GET /api/health` が 200。
 
@@ -183,17 +185,19 @@
 
 ### Phase 2: データモデル（`app/models.py`）
 
-- [ ] `practice_sessions` — id, name, created_at, court_count(既定2), court_names(JSON),
-      rotation(0/90/180/270), **random_seed（作成時に採番・不変）**
-- [ ] `members` — id, session_id, nickname, gender, level, status(active/resting/left),
+- [x] `practice_sessions` — id, name, created_at, rotation(0/90/180/270),
+      **random_seed（作成時に採番・不変）**
+- [x] `courts` — id, session_id, court_index(0起点), name, in_use(bool)。
+      作成時に最大数ぶん作る。途中で `in_use` を切り替えて試合用から外す/戻す
+- [x] `members` — id, session_id, nickname, gender, level, status(active/resting/left),
       baseline, created_at
-- [ ] `rounds` — id, session_id, seq（採用時のみ採番, nullable）,
+- [x] `rounds` — id, session_id, seq（採用時のみ採番, nullable）,
       status(pending/adopted/rejected), attempt, created_at, decided_at
-- [ ] `matches` — id, round_id, court_index
-- [ ] `match_slots` — id, match_id, team_index(0/1), member_id
-- [ ] `round_participation` — id, round_id, member_id, state(played/sat_out/resting)
+- [x] `matches` — id, round_id, court_id
+- [x] `match_slots` — id, match_id, team_index(0/1), member_id
+- [x] `round_participation` — id, round_id, member_id, state(played/sat_out/resting)
       **採用ラウンドのみ**
-- [ ] `member_profiles` — id, nickname（**unique 制約。PK ではない**）, gender, level, updated_at
+- [x] `member_profiles` — id, nickname（**unique 制約。PK ではない**）, gender, level, updated_at
       練習会に属さないグローバルなテーブル
 
 補足:
@@ -221,11 +225,11 @@
 
 ### Phase 3: 生成アルゴリズム（最重要・DB 非依存）
 
-- [ ] `app/scheduler/domain.py` — `Gender`, `Level`, `MemberStatus`, `PlayerStat`, `History`,
+- [x] `app/scheduler/domain.py` — `Gender`, `Level`, `MemberStatus`, `PlayerStat`, `History`,
       `Pair`, `Match`, `RoundPlan`
-- [ ] `app/scheduler/stats_rules.py` — スナップショット列から
+- [x] `app/scheduler/stats_rules.py` — スナップショット列から
       `plays` / `rest_credit` / `sit_out_streak` / `just_returned` を導出する純粋関数
-- [ ] `app/scheduler/generator.py` — `generate_round(...) -> RoundPlan`
+- [x] `app/scheduler/generator.py` — `generate_round(...) -> RoundPlan`
 
 #### 導出規則（`stats_rules.py`）
 
@@ -277,63 +281,63 @@
 
 **公平性**
 
-- [ ] 人数 8/9/10/12/16 それぞれ 30ラウンドで、参加回数の最大差が `fairness_slack_max + 1` 以内
-- [ ] 8人8枠では全員が毎ラウンド出場し、参加回数差が常に 0
-- [ ] 途中参加者が baseline により連続出場で過度に優遇されない
-- [ ] 休憩3ラウンド連続後の復帰時、`adjusted` の欠損がちょうど 1（休憩クレジット）
-- [ ] 連続不参加が 2 ラウンド続く事象が、9〜11人の設定でほぼ発生しない
+- [x] 人数 8/9/10/12/16 それぞれ 30ラウンドで、参加回数の最大差が `fairness_slack_max + 1` 以内
+- [x] 8人8枠では全員が毎ラウンド出場し、参加回数差が常に 0
+- [x] 途中参加者が baseline により連続出場で過度に優遇されない
+- [x] 休憩3ラウンド連続後の復帰時、`adjusted` の欠損がちょうど 1（休憩クレジット）
+- [x] 連続不参加が 2 ラウンド続く事象が、9〜11人の設定でほぼ発生しない
 
 **ばらけ（優先度1）**
 
-- [ ] 16人8枠を 20ラウンド回したとき、出場者集合が「前回の裏返し」に固定されない
-- [ ] 同じペアが 2 回目に現れる前に、より多くの異なるペアが出現している
+- [x] 16人8枠を 20ラウンド回したとき、出場者集合が「前回の裏返し」に固定されない
+- [x] 同じペアが 2 回目に現れる前に、より多くの異なるペアが出現している
 
 **並び順の非依存性（設計の要 D）**
 
-- [ ] 入力リストの順序をシャッフルしても、同一シードなら結果が完全に一致する
-- [ ] member_id を振り直しても出場者の選ばれ方に系統的な偏りが出ない
-- [ ] 履歴ゼロの初回生成を多数のシードで実行したとき、特定のペア・コート割当に偏らない
-- [ ] シードが異なれば結果が異なる
-- [ ] 同一シード・同一入力・同一 attempt で結果が完全に再現する
-- [ ] `avoid` を与えると別の編成が返る
+- [x] 入力リストの順序をシャッフルしても、同一シードなら結果が完全に一致する
+- [x] member_id を振り直しても出場者の選ばれ方に系統的な偏りが出ない
+- [x] 履歴ゼロの初回生成を多数のシードで実行したとき、特定のペア・コート割当に偏らない
+- [x] シードが異なれば結果が異なる
+- [x] 同一シード・同一入力・同一 attempt で結果が完全に再現する
+- [x] `avoid` を与えると別の編成が返る
 
 **初心者（優先度3〜5）**
 
-- [ ] 初心者2名以上でも beginner x beginner ペアが 0 件（初心者が過半数の異常系を除く）
-- [ ] 初心者が2名同時に出場するとき、両者のペアが同一コートで対戦する
-- [ ] 初心者と組む回数が非初心者間で均されている
+- [x] 初心者2名以上でも beginner x beginner ペアが 0 件（初心者が過半数の異常系を除く）
+- [x] 初心者が2名同時に出場するとき、両者のペアが同一コートで対戦する
+- [x] 初心者と組む回数が非初心者間で均されている
 
 **男女（優先度6）**
 
-- [ ] 男女均等16名: MXvMX が支配的、MMvFF が 0 に近い
-- [ ] 男性12/女性4: MMvMM と FFvFF が調整として現れ、MMvFF は避けられる
-- [ ] `other` を含むペアがミックス扱いで減点されない
+- [x] 男女均等16名: MXvMX が支配的、MMvFF が 0 に近い
+- [x] 男性12/女性4: MMvMM と FFvFF が調整として現れ、MMvFF は避けられる
+- [x] `other` を含むペアがミックス扱いで減点されない
 
 **境界・縮退**
 
-- [ ] 人数 4/5/6/7/8/9/13/16 の各ケースで妥当な編成、3人以下で `NotEnoughPlayers`
-- [ ] 全員同性・全員初心者・全員休憩などの縮退ケースでクラッシュしない
-- [ ] 重複出場者がいない、出場者数はちょうど `使用コート数 * 4` 名（不変条件）
+- [x] 人数 4/5/6/7/8/9/13/16 の各ケースで妥当な編成、3人以下で `NotEnoughPlayers`
+- [x] 全員同性・全員初心者・全員休憩などの縮退ケースでクラッシュしない
+- [x] 重複出場者がいない、出場者数はちょうど `使用コート数 * 4` 名（不変条件）
 
 **コートが埋まらないケース（8名未満）**
 
-- [ ] **4〜7名では使用コートが1面だけになり、出場者は4名ちょうど**
-- [ ] **使われないコートが `RoundPlan` から判別できる**（`n_courts=2` かつ `len(matches)==1`、
+- [x] **4〜7名では使用コートが1面だけになり、出場者は4名ちょうど**
+- [x] **使われないコートが `RoundPlan` から判別できる**（`n_courts=2` かつ `len(matches)==1`、
       使用コートは `court_index=0`）
-- [ ] 5名/6名/7名では余った 1〜3 名が `sat_out` になり、次ラウンドで優先的に出場する
+- [x] 5名/6名/7名では余った 1〜3 名が `sat_out` になり、次ラウンドで優先的に出場する
       （少人数ほど連続不参加が目立つため、`sit_out_streak` が確実に解消されること）
-- [ ] 7名で 14 ラウンド回して参加回数の最大差が 1 以内（4/7 ずつ回るので厳しい条件）
-- [ ] 途中で 7名 → 8名に増えたら、次の生成から 2面とも使われる
-- [ ] 途中で 8名 → 7名に減ったら、次の生成から 1面だけになる
+- [x] 7名で 14 ラウンド回して参加回数の最大差が 1 以内（4/7 ずつ回るので厳しい条件）
+- [x] 途中で 7名 → 8名に増えたら、次の生成から 2面とも使われる
+- [x] 途中で 8名 → 7名に減ったら、次の生成から 1面だけになる
 
 **13名のケース（もっともありがちな規模）**
 
-- [ ] 13名8枠で 26 ラウンド回して参加回数の最大差が `fairness_slack_max + 1` 以内
-- [ ] 同じく連続不参加が 2 ラウンド続く事象がほぼ発生しない（毎ラウンド5名が休むため）
-- [ ] 13名（男8/女5・初心者1名）という現実的な構成で、
+- [x] 13名8枠で 26 ラウンド回して参加回数の最大差が `fairness_slack_max + 1` 以内
+- [x] 同じく連続不参加が 2 ラウンド続く事象がほぼ発生しない（毎ラウンド5名が休むため）
+- [x] 13名（男8/女5・初心者1名）という現実的な構成で、
       初心者同士ペアが 0 件、MMvFF が 0 に近い、ペア重複が均されている
 
-- [ ] `tests/test_stats_rules.py` — 休憩ブロック・連続不参加・復帰判定をスナップショット列で検証
+- [x] `tests/test_stats_rules.py` — 休憩ブロック・連続不参加・復帰判定をスナップショット列で検証
 
 **DoD**: 上記すべてのテストがパスすること。
 
@@ -341,8 +345,8 @@
 
 ### Phase 4: 永続化サービス層（`app/services/`）
 
-- [ ] `stats.py` — DB → `PlayerStat` / `History` の組み立て（採用ラウンドのみ走査し `stats_rules` で導出）
-- [ ] `rounds.py` — 生成 / 採用 / 不採用 / 取り消しの遷移
+- [x] `stats.py` — DB → `PlayerStat` / `History` の組み立て（採用ラウンドのみ走査し `stats_rules` で導出）
+- [x] `rounds.py` — 生成 / 採用 / 不採用 / 取り消しの遷移
   - 生成: 既存 pending があれば rejected にしてから新規 pending を作る。
     不採用になった編成の署名を `avoid` として渡す
   - 採用: 1トランザクションで `seq` 採番 + `round_participation` を全非 left メンバー分書き込む
@@ -399,15 +403,15 @@ DELETE /api/member-profiles/{nickname}      辞書から削除
 
 **DoD**: `tests/test_api.py` —
 
-- [ ] 「練習会作成 → 16名登録 → 生成 → 採用 → 再生成 → 休憩 → 生成」の一連フローが通る
-- [ ] メンバーを変更しても `/current` の編成と `revision` が変わらない
-- [ ] その後に生成を走らせると初めて変更が反映される
-- [ ] 練習会を2つ作ると `random_seed` が異なる
-- [ ] メンバー登録時に `member_profiles` が upsert され、既存ニックネームなら属性が引き当てられる
-- [ ] **別の練習会で同じニックネームを登録しても、参加回数などの統計は引き継がれない**（重要）
-- [ ] 同名を同じ練習会に2名登録でき、警告フラグが立つ
-- [ ] 同一ラウンドに同名が含まれると `duplicate_nicknames` に出る
-- [ ] 練習会を削除しても `member_profiles` は残る
+- [x] 「練習会作成 → 16名登録 → 生成 → 採用 → 再生成 → 休憩 → 生成」の一連フローが通る
+- [x] メンバーを変更しても `/current` の編成と `revision` が変わらない
+- [x] その後に生成を走らせると初めて変更が反映される
+- [x] 練習会を2つ作ると `random_seed` が異なる
+- [x] メンバー登録時に `member_profiles` が upsert され、既存ニックネームなら属性が引き当てられる
+- [x] **別の練習会で同じニックネームを登録しても、参加回数などの統計は引き継がれない**（重要）
+- [x] 同名を同じ練習会に2名登録でき、警告フラグが立つ
+- [x] 同一ラウンドに同名が含まれると `duplicate_nicknames` に出る
+- [x] 練習会を削除しても `member_profiles` は残る
 
 ---
 
@@ -420,15 +424,15 @@ DELETE /api/member-profiles/{nickname}      辞書から削除
 - [ ] **ニックネーム入力欄に `<datalist>` で過去の登録名を補完**。既存の名前を入力・選択した時点で
       性別・レベルを自動で埋める（上書きは自由。保存時に辞書を last-write-wins で更新）
 - [ ] **同一練習会内に同名がいる場合は該当行に警告を表示**（登録自体はブロックしない）
-- [ ] コート名の編集
+- [ ] **コートごとに「試合で使う / 練習コートにする」を切り替え**（初心者の育成用に外すため）と名前の編集
 - [ ] 参加回数の一覧（公平性の目視確認用）
 - [ ] 「試合表示画面を開く」リンク
 
 **`display.html` + `display.js`（試合表示画面）**
 
 - [ ] 画面いっぱいに2コート。コート名 + 4名（チーム2つ）を大きく表示
-- [ ] **使われないコートは、その旨をはっきり表示する**（8名未満のとき。コート枠自体は残し、
-      「このコートは使いません」と淡色で表示して、空欄や消失で混乱させない）
+- [ ] **使われないコートは理由が分かるように表示する**。コート枠自体は残し、淡色で
+      「練習コート」（試合用から外している）か「人数が足りません」かを書き分ける
 - [ ] 下部に「開始」「スキップ」のみ（試合中は「次のマッチ」）
 - [ ] 待機中・休憩中のメンバーを下端に小さく1行表示（表示 ON/OFF 可）
 - [ ] 回転ボタン: 0=左右(コート1が左) / 90=上下(コート1が上) / 180=左右(コート1が右) /
@@ -472,10 +476,12 @@ DELETE /api/member-profiles/{nickname}      辞書から削除
 
 ### Phase 8: 仕上げ
 
-- [ ] `README.md` — 最短起動手順（`docker compose up --build` → `http://localhost:8000`）、
-      タブレットからのアクセス（PC の LAN IP）、**DB 差し替え手順**
-      （`DATABASE_URL=postgresql+psycopg://...` + `pip install .[postgres]`）、記録破棄の方法
-- [ ] `.gitignore` / `.dockerignore`
+- [x] `README.md` — 起動手順、タブレットからのアクセス、DB 差し替え、記録破棄、**Vercel デプロイ手順**
+- [x] `.gitignore` / `.dockerignore` / `.vercelignore`
+- [x] **Vercel 対応** — `api/index.py`（ASGI エントリ）、`vercel.json`、`requirements.txt`。
+      サーバーレスでは接続プールを持たない（`NullPool`）。テーブル作成は同時起動と競合しても
+      実際に揃っていれば続行する。`python -m app.init_db` で明示的に作ることもできる
+- [x] `doc/algorithm.md` — 最終的なアルゴリズムの説明
 
 **DoD**: クリーンな状態から `docker compose up --build` で起動し、README の手順どおり一連の操作が完了する。
 
@@ -557,3 +563,5 @@ pickle_shuffle/
 | 2026-09-22 | **適応slackを撤回し、厳密公平を既定に** | 実測で前提が誤りと判明。枠を広げても ばらけは改善せず、公平性だけ悪化していた |
 | 2026-09-22 | 男女構成のうち「男子ペア対女子ペア」だけを別枠の準ハード制約に分離 | 以前は優先度6の男女構成が優先度1のばらけを押しのけていた |
 | 2026-09-22 | 貪欲法に先読み(ロールアウト)を追加、対戦相手の重みを倍に | 最適化対象はマッチの品質。理論超過 19.9% → 15.3% |
+| 2026-09-22 | コートを `courts` テーブルに切り出し、途中で試合用から外せるようにした | ユーザー要望。初心者の育成用に1面を練習コートとして空けるため。外れるメンバーは休憩扱い |
+| 2026-09-22 | デプロイ先を Vercel に。ローカルの docker compose も PostgreSQL に統一 | ユーザー要望。SQLite はサーバーレスで使えない。ローカルと本番で DB を揃えて差異による不具合を防ぐ |

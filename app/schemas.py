@@ -25,7 +25,7 @@ class CourtUpdate(BaseModel):
 
 class SessionCreate(BaseModel):
     name: str
-    court_count: int = Field(default=2, ge=1, le=8)
+    court_count: int = Field(default=2, ge=1, le=4)
 
 
 class SessionUpdate(BaseModel):

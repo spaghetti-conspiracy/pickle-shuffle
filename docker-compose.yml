@@ -1,0 +1,31 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # 練習会の記録。破棄したいときはこのディレクトリを消す。
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: sqlite:////app/data/app.db
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------
+  # 通常の DB に差し替えるとき。
+  #   1. 下の db サービスのコメントを外す
+  #   2. web の DATABASE_URL を次に変える
+  #        postgresql+psycopg://pickle:pickle@db:5432/pickle
+  #   3. Dockerfile の pip install を `pip install ".[postgres]"` に変える
+  # アプリ側のコードは ORM だけを使っているので、変更は不要。
+  # ---------------------------------------------------------------
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: pickle
+  #     POSTGRES_PASSWORD: pickle
+  #     POSTGRES_DB: pickle
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #
+  # volumes:
+  #   pgdata:

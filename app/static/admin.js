@@ -227,7 +227,7 @@ $("open-display").addEventListener("click", () => {
     showError("先に練習会を作成または選択してください");
     return;
   }
-  window.open(`/display.html?session=${sessionId}`, "_blank");
+  window.open(`/overview.html?session=${sessionId}`, "_blank");
 });
 
 $("new-nickname").addEventListener("change", autofillFromProfile);

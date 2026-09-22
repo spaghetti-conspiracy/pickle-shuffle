@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.scheduler.domain import Gender, Level
 
 
@@ -52,6 +54,22 @@ def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 
 
+@pytest.mark.parametrize(
+    ("path", "marker"),
+    [
+        ("/", "練習会を選ぶ"),
+        ("/manage.html", "練習会の管理"),
+        ("/overview.html", "全体表示"),
+        ("/member.html", "コート表示"),
+    ],
+)
+def test_the_four_screens_are_served(client, path, marker):
+    """作成・選択 / 管理 / 全体表示 / メンバー用 の4画面を配信する。"""
+    response = client.get(path)
+    assert response.status_code == 200
+    assert marker in response.text
+
+
 def test_api_responses_are_not_cached(client):
     """表示画面は2秒ごとに読むので、古い応答を使われると困る。
 
@@ -66,7 +84,7 @@ def test_static_files_are_revalidated(client):
 
     ETag は付いているので、変わっていなければ 304 が返るだけで通信量は増えない。
     """
-    for path in ("/",):
+    for path in ("/", "/overview.js", "/member.js", "/style.css"):
         response = client.get(path)
         assert response.headers.get("cache-control") == "no-cache", path
         assert response.headers.get("etag"), path

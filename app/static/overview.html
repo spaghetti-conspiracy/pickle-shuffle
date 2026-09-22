@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>全体表示 — ピックルボール対戦カード</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="overview">
+  <div class="overview-head">
+    <h1 id="session-name"></h1>
+    <span id="warnings" class="warnings"></span>
+    <a id="admin-link" href="/">メンバー登録へ</a>
+  </div>
+
+  <div class="overview-body">
+    <div id="courts" class="court-list"></div>
+
+    <div class="side">
+      <section class="qr">
+        <h2>メンバー用画面</h2>
+        <img id="qr" alt="メンバー用画面のQRコード">
+        <p class="hint">スマートフォンで読み取ると、自分のコートを見られます</p>
+      </section>
+      <section>
+        <h2>待機中</h2>
+        <p id="waiting" class="muted">—</p>
+      </section>
+      <section>
+        <h2>休憩中</h2>
+        <p id="resting" class="muted">—</p>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="action-bar">
+  <button id="start" class="primary">開始</button>
+  <button id="next">次のマッチ</button>
+</div>
+
+<script type="module" src="/overview.js"></script>
+</body>
+</html>

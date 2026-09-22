@@ -1,10 +1,14 @@
-/** 試合表示画面。タブレットに出しっぱなしにして使う。 */
+/** 全体表示画面。
+ *
+ * 練習会のリーダーが読み上げるための画面。全コートの現在のマッチを一覧し、
+ * 開始とスキップをここで決める。決めた結果はメンバー用画面へ自動で伝わる
+ * （再スケジュールはリーダーの意図、その拡散は自動）。
+ */
 
 import { api, currentSessionId, rememberSessionId } from "/api.js";
 
 const $ = (id) => document.getElementById(id);
 const POLL_INTERVAL_MS = 2000;
-const ROTATIONS = [0, 90, 180, 270];
 
 const sessionId = currentSessionId();
 let lastRevision = null;
@@ -55,19 +59,16 @@ function renderCourt(court) {
 }
 
 function render(data) {
+  document.title = `${data.session.name} — 全体表示`;
   $("session-name").textContent = data.session.name;
+  $("admin-link").href = `/?session=${sessionId}`;
 
   const courts = $("courts");
-  courts.dataset.rotation = String(data.session.rotation);
   courts.innerHTML = "";
   for (const court of data.courts) courts.append(renderCourt(court));
 
-  const waiting = data.waiting.map((p) => p.nickname);
-  const resting = data.resting.map((p) => p.nickname);
-  const parts = [];
-  if (waiting.length) parts.push(`待機 ${waiting.join(" ")}`);
-  if (resting.length) parts.push(`休憩 ${resting.join(" ")}`);
-  $("waiting").textContent = parts.join("　/　");
+  $("waiting").textContent = data.waiting.map((p) => p.nickname).join("　") || "—";
+  $("resting").textContent = data.resting.map((p) => p.nickname).join("　") || "—";
 
   const warnings = [];
   if (data.duplicate_nicknames.length) {
@@ -96,7 +97,6 @@ async function poll() {
   } catch (error) {
     $("warnings").textContent = `通信できません（${error.message}）`;
   } finally {
-    // 最初の読み込みが終わったことを示す。操作の前にこれを待てばよい。
     document.body.dataset.ready = "1";
   }
 }
@@ -135,19 +135,12 @@ $("next").addEventListener("click", () =>
   act(() => api.post(`/api/sessions/${sessionId}/rounds/generate`)),
 );
 
-$("rotate").addEventListener("click", () =>
-  act(async () => {
-    const current = await api.get(`/api/sessions/${sessionId}/current`);
-    const next = ROTATIONS[(ROTATIONS.indexOf(current.session.rotation) + 1) % ROTATIONS.length];
-    await api.patch(`/api/sessions/${sessionId}`, { rotation: next });
-    return api.get(`/api/sessions/${sessionId}/current`);
-  }),
-);
-
 if (!sessionId) {
-  $("warnings").textContent = "練習会が選ばれていません。管理画面から開いてください。";
+  $("warnings").textContent = "練習会が選ばれていません。メンバー登録画面から開いてください。";
+  document.body.dataset.ready = "1";
 } else {
   rememberSessionId(sessionId);
+  $("qr").src = `/api/sessions/${sessionId}/member-qr.svg`;
   poll();
   setInterval(poll, POLL_INTERVAL_MS);
 }

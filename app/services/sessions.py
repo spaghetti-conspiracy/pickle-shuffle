@@ -67,16 +67,11 @@ def update_session(
     session: PracticeSession,
     *,
     name: str | None = None,
-    rotation: int | None = None,
 ) -> PracticeSession:
     if name is not None:
         if not name.strip():
             raise ValidationError("練習会の名前を入力してください")
         session.name = name.strip()
-    if rotation is not None:
-        if rotation not in (0, 90, 180, 270):
-            raise ValidationError("回転は 0 / 90 / 180 / 270 のいずれかです")
-        session.rotation = rotation
     db.commit()
     db.refresh(session)
     return session

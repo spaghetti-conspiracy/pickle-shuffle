@@ -30,7 +30,6 @@ class SessionCreate(BaseModel):
 
 class SessionUpdate(BaseModel):
     name: str | None = None
-    rotation: int | None = None
 
 
 class SessionOut(BaseModel):
@@ -38,7 +37,6 @@ class SessionOut(BaseModel):
 
     id: int
     name: str
-    rotation: int
     created_at: datetime
     courts: list[CourtOut]
 

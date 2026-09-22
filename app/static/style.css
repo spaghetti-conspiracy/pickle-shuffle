@@ -1,0 +1,315 @@
+/* タブレットで見ることを前提にしている。文字は大きめ、タップ領域は 44px 以上。 */
+
+:root {
+  --bg: #0f1216;
+  --panel: #1a1f26;
+  --line: #2b323c;
+  --text: #f2f5f8;
+  --muted: #9aa5b1;
+  --accent: #3ddc84;
+  --warn: #ffb020;
+  --danger: #ff6b6b;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  min-height: 44px;
+  padding: 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b2a18;
+  font-weight: 700;
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+input,
+select {
+  min-height: 44px;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11161c;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------- 管理画面 ---------- */
+
+.admin {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem 1rem 4rem;
+}
+
+.admin h1 {
+  font-size: 1.3rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.admin section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.admin h2 {
+  font-size: 1rem;
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+tr.resting td:first-child::after {
+  content: " 休憩中";
+  color: var(--warn);
+  font-size: 0.8rem;
+}
+
+tr.left {
+  opacity: 0.45;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: #2a2f38;
+  color: var(--muted);
+}
+
+.badge.warn {
+  background: #3a2c10;
+  color: var(--warn);
+}
+
+.notice {
+  color: var(--warn);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+  min-height: 1.2em;
+}
+
+/* ---------- 試合表示画面 ---------- */
+
+.display {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.display-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex: 0 0 auto;
+}
+
+.display-top .warnings {
+  color: var(--warn);
+}
+
+.courts {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 0.6rem;
+  padding: 0 0.6rem;
+  min-height: 0;
+}
+
+.courts[data-rotation="0"] {
+  flex-direction: row;
+}
+.courts[data-rotation="90"] {
+  flex-direction: column;
+}
+.courts[data-rotation="180"] {
+  flex-direction: row-reverse;
+}
+.courts[data-rotation="270"] {
+  flex-direction: column-reverse;
+}
+
+.court {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.court-name {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.8rem;
+  color: var(--muted);
+  font-size: clamp(0.9rem, 2.2vh, 1.4rem);
+  border-bottom: 1px solid var(--line);
+}
+
+.court-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.team {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2em;
+  min-height: 0;
+  padding: 0.3rem;
+}
+
+.player {
+  font-size: clamp(1.4rem, 7vh, 5rem);
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.versus {
+  flex: 0 0 auto;
+  text-align: center;
+  color: var(--muted);
+  font-size: clamp(0.8rem, 2vh, 1.2rem);
+  letter-spacing: 0.3em;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.1rem 0;
+}
+
+.court.empty .court-body {
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: clamp(1rem, 3vh, 1.8rem);
+}
+
+.court.practice {
+  border-style: dashed;
+  opacity: 0.65;
+}
+
+.display-bottom {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0.8rem;
+}
+
+.waiting {
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: clamp(0.75rem, 1.8vh, 1rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2rem;
+}
+
+.actions button {
+  min-width: 8rem;
+  min-height: 3.2rem;
+  font-size: clamp(1rem, 2.6vh, 1.5rem);
+}

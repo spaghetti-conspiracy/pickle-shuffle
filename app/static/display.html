@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>試合表示 — ピックルボール対戦カード</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="display">
+  <div class="display-top">
+    <span id="session-name"></span>
+    <span id="warnings" class="warnings"></span>
+    <button id="rotate" title="コートの並びを画面の配置に合わせる">⟳ 並び</button>
+  </div>
+
+  <div id="courts" class="courts" data-rotation="0"></div>
+
+  <div class="display-bottom">
+    <div id="waiting" class="waiting"></div>
+    <div class="actions">
+      <button id="start" class="primary">開始</button>
+      <button id="next">次のマッチ</button>
+    </div>
+  </div>
+</div>
+<script type="module" src="/display.js"></script>
+</body>
+</html>

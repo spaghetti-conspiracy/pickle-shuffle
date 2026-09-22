@@ -1,0 +1,8 @@
+.venv/
+data/
+doc/
+tests/
+.pytest_cache/
+.ruff_cache/
+Dockerfile
+docker-compose.yml

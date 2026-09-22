@@ -1,0 +1,7 @@
+# Vercel の Python ランタイムはこのファイルを見る。
+# ローカルとコンテナは pyproject.toml を使う。
+fastapi>=0.110
+uvicorn[standard]>=0.27
+sqlalchemy>=2.0
+pydantic>=2.6
+psycopg[binary]>=3.1

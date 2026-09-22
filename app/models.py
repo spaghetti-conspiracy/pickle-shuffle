@@ -6,8 +6,8 @@ import secrets
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -54,9 +54,9 @@ def new_random_seed() -> int:
     return secrets.randbits(63)
 
 
-def default_court_names(court_count: int = DEFAULT_COURT_COUNT) -> list[str]:
+def default_court_name(court_index: int) -> str:
     """コート名の初期値。"""
-    return [f"コート{i + 1}" for i in range(court_count)]
+    return f"コート{court_index + 1}"
 
 
 class PracticeSession(Base):
@@ -67,14 +67,15 @@ class PracticeSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    court_count: Mapped[int] = mapped_column(Integer, default=DEFAULT_COURT_COUNT)
-    court_names: Mapped[list[str]] = mapped_column(JSON, default=default_court_names)
-    rotation: Mapped[int] = mapped_column(Integer, default=0)
-    """コートの配置。0=左右 / 90=上下 / 180=左右反転 / 270=上下反転。"""
-
     random_seed: Mapped[int] = mapped_column(BigInteger, default=new_random_seed)
     """この練習会の非決定性の種。作成時に採番し、以後不変。"""
 
+    courts: Mapped[list[Court]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Court.court_index",
+    )
     members: Mapped[list[Member]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
@@ -87,6 +88,30 @@ class PracticeSession(Base):
         passive_deletes=True,
         order_by="Round.id",
     )
+
+
+class Court(Base):
+    """コート。練習会の作成時に最大数ぶん作り、以後は増減させない。
+
+    途中で ``in_use`` を落とすと試合には使われなくなる。初心者の育成用に
+    練習コートとして空けておく、といった使い方を想定している。
+    """
+
+    __tablename__ = "courts"
+    __table_args__ = (UniqueConstraint("session_id", "court_index", name="uq_court_index"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True
+    )
+    court_index: Mapped[int] = mapped_column(Integer)
+    """0 起点の並び順。表示の並びもこの順。"""
+
+    name: Mapped[str] = mapped_column(String(50))
+    in_use: Mapped[bool] = mapped_column(Boolean, default=True)
+    """試合に使うか。False なら練習コートとして試合から外す。"""
+
+    session: Mapped[PracticeSession] = relationship(back_populates="courts")
 
 
 class Member(Base):
@@ -142,7 +167,6 @@ class Round(Base):
         back_populates="round",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="Match.court_index",
     )
     participations: Mapped[list[RoundParticipation]] = relationship(
         back_populates="round",
@@ -158,9 +182,10 @@ class Match(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     round_id: Mapped[int] = mapped_column(ForeignKey("rounds.id", ondelete="CASCADE"), index=True)
-    court_index: Mapped[int] = mapped_column(Integer)
+    court_id: Mapped[int] = mapped_column(ForeignKey("courts.id", ondelete="CASCADE"), index=True)
 
     round: Mapped[Round] = relationship(back_populates="matches")
+    court: Mapped[Court] = relationship()
     slots: Mapped[list[MatchSlot]] = relationship(
         back_populates="match",
         cascade="all, delete-orphan",

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+import segno
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -51,7 +54,6 @@ def _session_out(session: PracticeSession) -> SessionOut:
     return SessionOut(
         id=session.id,
         name=session.name,
-        rotation=session.rotation,
         created_at=session.created_at,
         courts=[CourtOut.model_validate(c) for c in session.courts],
     )
@@ -78,9 +80,7 @@ def update_session(
     session_id: int, payload: SessionUpdate, db: DbSession
 ) -> SessionOut:
     session = sessions_service.get_session(db, session_id)
-    sessions_service.update_session(
-        db, session, name=payload.name, rotation=payload.rotation
-    )
+    sessions_service.update_session(db, session, name=payload.name)
     return _session_out(session)
 
 
@@ -302,6 +302,32 @@ def undo_round(round_id: int, db: DbSession) -> CurrentOut:
     session_id = round_.session_id
     rounds_service.undo(db, round_)
     return _build_current(db, sessions_service.get_session(db, session_id))
+
+
+def member_page_url(request: Request, session_id: int) -> str:
+    """メンバー用画面の URL。
+
+    ブラウザが実際に叩いたホストから組み立てるので、手元の LAN の IP でも
+    Vercel のドメインでも、そのまま読み取れる URL になる。
+    """
+    base = str(request.base_url).rstrip("/")
+    return f"{base}/member.html?session={session_id}"
+
+
+@router.get("/sessions/{session_id}/member-qr.svg")
+def member_qr(session_id: int, request: Request, db: DbSession) -> Response:
+    """メンバー用画面の QR コード。全体表示画面に出して、各自のスマホで読んでもらう。"""
+    sessions_service.get_session(db, session_id)
+    code = segno.make(member_page_url(request, session_id), error="m")
+    # <img> から読むので、名前空間付きの独立した SVG 文書として出力する
+    # （svg_inline は HTML に直接埋め込む用で xmlns が付かず、画像として読めない）。
+    buffer = BytesIO()
+    code.save(buffer, kind="svg", scale=4, border=2, dark="#f2f5f8", light="#0f1216")
+    return Response(
+        content=buffer.getvalue(),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/sessions/{session_id}/stats", response_model=StatsOut)

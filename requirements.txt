@@ -4,4 +4,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 sqlalchemy>=2.0
 pydantic>=2.6
+segno>=1.6
 psycopg[binary]>=3.1

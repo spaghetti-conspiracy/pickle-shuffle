@@ -39,7 +39,6 @@ def test_session_is_created_with_its_courts(client):
     session = create_session(client, court_count=3)
     assert [c["name"] for c in session["courts"]] == ["コート1", "コート2", "コート3"]
     assert all(c["in_use"] for c in session["courts"])
-    assert session["rotation"] == 0
 
 
 def test_each_session_gets_its_own_seed(client, db):
@@ -185,13 +184,61 @@ def test_the_last_court_cannot_be_taken_out(client):
     assert response.status_code == 409
 
 
-def test_rotation_is_persisted(client):
+def test_court_names_reach_the_display(client):
+    """コート名は会場との対応付けに使うので、表示側まで届く必要がある。
+
+    画面の回転機能はやめて、コート名で会場と合わせる方針にした。
+    """
+    session = create_session(client, court_count=2)
+    add_members(client, session["id"], 8)
+    client.patch(
+        f"/api/sessions/{session['id']}/courts/{session['courts'][0]['id']}",
+        json={"name": "入口側"},
+    )
+    current = client.post(f"/api/sessions/{session['id']}/rounds/generate").json()
+    assert [c["name"] for c in current["courts"]] == ["入口側", "コート2"]
+
+
+# ---------------------------------------------------------------------------
+# メンバー用画面の QR コード
+# ---------------------------------------------------------------------------
+
+
+def test_member_qr_is_served_as_svg(client):
+    """全体表示画面に出す QR。読み取るとメンバー用画面が開く。"""
     session = create_session(client)
-    client.patch(f"/api/sessions/{session['id']}", json={"rotation": 90})
-    assert client.get(f"/api/sessions/{session['id']}").json()["rotation"] == 90
-    assert client.patch(
-        f"/api/sessions/{session['id']}", json={"rotation": 45}
-    ).status_code == 422
+    response = client.get(f"/api/sessions/{session['id']}/member-qr.svg")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in response.text
+
+
+def test_member_qr_is_a_standalone_svg(client):
+    """``<img>`` から読み込むので、名前空間付きの独立した SVG 文書である必要がある。
+
+    HTML への直接埋め込み用の出力（xmlns なし）だと画像として読めず、
+    ブラウザでは QR が表示されない。
+    """
+    session = create_session(client)
+    body = client.get(f"/api/sessions/{session['id']}/member-qr.svg").text
+    assert 'xmlns="http://www.w3.org/2000/svg"' in body
+
+
+def test_member_qr_points_at_the_host_the_browser_used(client):
+    """QR の URL は、ブラウザが実際に叩いたホストから組み立てる。
+
+    手元の LAN の IP でも Vercel のドメインでも、そのまま読み取れるようにするため。
+    """
+    from app.api import member_page_url
+
+    class _Request:
+        base_url = "http://192.168.1.10:8000/"
+
+    assert member_page_url(_Request(), 7) == "http://192.168.1.10:8000/member.html?session=7"
+
+
+def test_member_qr_for_a_missing_session(client):
+    assert client.get("/api/sessions/999/member-qr.svg").status_code == 404
 
 
 # ---------------------------------------------------------------------------

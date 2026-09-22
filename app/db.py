@@ -46,14 +46,19 @@ engine = create_engine(settings.database_url, future=True, **_engine_kwargs(sett
 if engine.dialect.name == "sqlite":
 
     @event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:  # noqa: ANN001
-        """SQLite の外部キー制約を有効にする。
+    def _configure_sqlite(dbapi_connection, connection_record) -> None:  # noqa: ANN001
+        """SQLite の挙動を、差し替え先の DB に近づける。
 
-        SQLite は既定で FK を検査しないため、他の DB に差し替えたときだけ
-        参照整合性の不具合が出る、という事態になりかねない。挙動を揃えておく。
+        * 外部キー制約 — SQLite は既定で検査しない。有効にしておかないと、
+          他の DB に差し替えたときだけ参照整合性の不具合が出ることになる。
+        * WAL — 既定のジャーナルでは読んでいる間は書けない。管理画面と表示画面が
+          同時にアクセスするので、読み書きを並行できるようにする。
+        * busy_timeout — 書き込みが競合したとき、即座に諦めず少し待つ。
         """
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
 

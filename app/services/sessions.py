@@ -23,8 +23,8 @@ from app.models import (
 from app.scheduler.domain import Gender, Level, MemberStatus
 from app.services import stats
 
-MAX_COURTS = 8
-"""コート数の上限。会場の規模から見て十分な値。"""
+MAX_COURTS = 4
+"""コート数の上限。実際の練習会で押さえられる面数から決めた。"""
 
 
 # ---------------------------------------------------------------------------

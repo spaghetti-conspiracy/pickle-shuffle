@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 練習会の記録（SQLite のファイル置き場）
+data/

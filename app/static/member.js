@@ -21,6 +21,7 @@ let poller = null;
 /** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
 const EMPTY_COURT_MESSAGE = {
   waiting: "まだマッチが決まっていません",
+  next_round: "次のマッチから使います",
   idle: "このコートは今回お休みです",
   practice: "練習コートです",
 };

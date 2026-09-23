@@ -27,6 +27,7 @@ async function loadSession() {
   const session = await api.get(`/api/sessions/${sessionToken}`);
   document.title = `${session.name} — 練習会の管理`;
   $("session-name").textContent = session.name;
+  $("highlight-beginners").checked = session.highlight_beginners;
   return session;
 }
 
@@ -183,6 +184,18 @@ async function refresh() {
   await Promise.all([loadCourts(), loadMembers(), loadProfiles()]);
   document.body.dataset.ready = "1";
 }
+
+$("highlight-beginners").addEventListener("change", async (event) => {
+  try {
+    await api.patch(`/api/sessions/${sessionToken}`, {
+      highlight_beginners: event.target.checked,
+    });
+    showError("");
+  } catch (error) {
+    showError(error.message);
+    event.target.checked = !event.target.checked;
+  }
+});
 
 $("open-overview").addEventListener("click", () => {
   window.open(`/overview.html?session=${sessionToken}`, "_blank");

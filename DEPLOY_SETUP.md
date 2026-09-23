@@ -143,10 +143,24 @@ cat .vercel/project.json   # orgId と projectId
 2. **Create Token**
 3. 入力するのは3つ
    - **Token Name**: `github-actions-pickle-shuffle` など、用途が分かる名前
-   - **Scope**: **このプロジェクトを持つアカウント／チームを選ぶ。**
-     ここを間違えると、デプロイのときに 403 になる
+   - **Scope**: **チーム（`spaghetti-conspiracy`）を選び、対象は "All projects" にする。**
+     **特定のプロジェクトに絞ると CLI では使えない。** 絞ったトークンは REST API で
+     プロジェクトを引くことはできるが、ユーザを引けないため（`/v2/user` が
+     `User not found`）、CLI が最初のユーザ読み込みで落ちる:
+
+     ```
+     Error: Not able to load user because of unexpected error: User not found. (404)
+     Error: Could not retrieve Project Settings.
+     ```
+
    - **Expiration**: 期限。切れるとデプロイが止まるので、付けるなら控えておく
 4. **Create**。**値はこの1回しか表示されない**
+
+作ったトークンが使えるかは、これで確かめられる（ユーザ名が返れば CLI で使える）。
+
+```bash
+curl -s -H "Authorization: Bearer <token>" https://api.vercel.com/v2/user
+```
 
 `vercel login` 済みなら手元の `~/.local/share/com.vercel.cli/auth.json`
 （環境により `~/.vercel/auth.json`）にもトークンがあるが、**CI 用は別に
@@ -250,5 +264,6 @@ gh release create v0.1.0 --title 'v0.1.0' --notes '試験運用の開始'
 | 最初のアクセスだけ遅い | Neon の無料枠はアイドルで自動停止する。練習会の前に一度開く |
 | `prepared statement ... does not exist` | 接続文字列に `&prepare_threshold=0` を足す（PgBouncer 対策） |
 | push しただけで Vercel が動く | 手順3が効いていない。Ignored Build Step を確認 |
+| `Could not retrieve Project Settings` | トークンが特定プロジェクトに絞られている。**All projects** で作り直す |
 | Actions の deploy が 403 | `VERCEL_TOKEN` のスコープにこのプロジェクトのチームが入っているか |
 | staging に `ci-smoke-…` が残っている | smoke の片付けが失敗した残骸。管理画面から消してよい |

@@ -63,14 +63,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: 本番と同じ依存を入れる
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        # **Vercel は `uv.lock` を見る**（`requirements.txt` ではない）。
+        # 開発用の依存を入れずに、本番に入るものだけで動くことを確かめる。
+        run: uv sync --frozen --no-dev --python 3.12
 
       - name: 本番と同じ形で起動して叩く
         # Vercel が使うのは api/index.py。ここが読めなければ本番は 500 になる。
@@ -85,7 +86,7 @@ jobs:
           set -euo pipefail
           # **PID を控えて必ず落とす。** 残したままだと、ジョブの後処理
           # （uv のキャッシュ整理）が掴まれたまま終わらない。
-          python -m uvicorn api.index:app --port 8000 &
+          uv run --no-dev python -m uvicorn api.index:app --port 8000 &
           echo $! > uvicorn.pid
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8000/api/health >/dev/null && break

@@ -96,9 +96,10 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_CLI_VERSION: "59.25.4"
         run: |
-          npx --yes vercel@$VERCEL_CLI_VERSION pull --yes --environment=production --token "$VERCEL_TOKEN"
-          npx --yes vercel@$VERCEL_CLI_VERSION build --prod --token "$VERCEL_TOKEN"
-          url=$(npx --yes vercel@$VERCEL_CLI_VERSION deploy --prebuilt --prod --token "$VERCEL_TOKEN")
+          set -euo pipefail
+          # staging と同じ理由で `--prebuilt` は使わない。
+          npx --yes vercel@$VERCEL_CLI_VERSION deploy --prod --token "$VERCEL_TOKEN" > deploy.json
+          url=$(jq -er '.deployment.url' < deploy.json)
           echo "production: $url"
           echo "production: $url" >> "$GITHUB_STEP_SUMMARY"
 

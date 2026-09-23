@@ -9,11 +9,17 @@ dependencies = [
     "sqlalchemy>=2.0",
     "pydantic>=2.6",
     "segno>=1.6",
+    # **本番（Vercel + Neon）では必須。** extra にしていた頃、Vercel が
+    # `uv.lock` を見るようになった時点で psycopg が入らなくなり、
+    # `ModuleNotFoundError: No module named 'psycopg'` で全リクエストが 500 になった。
+    # 手元は SQLite で動くが、入っていても害は無いので通常の依存に置く。
+    "psycopg[binary]>=3.1",
 ]
 
 [project.optional-dependencies]
-# 別の DB に差し替えるとき: pip install -e ".[postgres]"
-postgres = ["psycopg[binary]>=3.1"]
+# 後方互換のために残す（`pip install -e ".[postgres]"` と書いた手順書がある）。
+# 中身は通常の依存に移したので空でよい。
+postgres = []
 
 # 開発用は extras ではなく依存グループに置く。extras だと `uv sync` が
 # 既定で入れないので、CLAUDE.md の手順どおりに進めてもテストが動かない。

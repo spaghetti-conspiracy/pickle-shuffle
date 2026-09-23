@@ -230,3 +230,8 @@ ci.db
 ci.db-*
 cookie.txt
 *.sqlite
+.vercel
+.env*
+
+# NFS 上で開いたままのファイルを消すと残る一時ファイル。`git add -A` が拾う。
+.nfs*

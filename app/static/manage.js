@@ -5,14 +5,13 @@
  */
 
 import {
+  $,
   api,
   currentSessionToken,
   GENDER_LABELS,
   LEVEL_LABELS,
   rememberSessionToken,
 } from "/api.js";
-
-const $ = (id) => document.getElementById(id);
 
 const sessionToken = currentSessionToken();
 let profiles = [];
@@ -43,16 +42,28 @@ async function loadCourts() {
     nameInput.value = court.name;
     nameInput.size = 12;
     nameInput.addEventListener("change", async () => {
-      await api.patch(`/api/sessions/${sessionToken}/courts/${court.id}`, {
-        name: nameInput.value,
-      });
+      const name = nameInput.value;
+      try {
+        await api.patch(`/api/sessions/${sessionToken}/courts/${court.id}`, { name });
+        court.name = name;
+        showError("");
+      } catch (error) {
+        // 黙って失敗すると、入力欄に新しい名前が残るので通ったように見える。
+        nameInput.value = court.name;
+        showError(error.message);
+      }
     });
     nameCell.append(nameInput);
 
+    const stateCell = document.createElement("td");
+    stateCell.textContent = court.in_use ? "試合用" : "練習コート";
+
     const useCell = document.createElement("td");
     const toggle = document.createElement("button");
-    toggle.textContent = court.in_use ? "試合で使う" : "練習コート";
-    toggle.classList.toggle("primary", court.in_use);
+    // 現在の状態ではなく、押したら起きることを書く。
+    // 同じ画面のメンバー行が「休憩/復帰」＝操作を書く規約なので、揃える。
+    toggle.textContent = court.in_use ? "練習コートにする" : "試合に戻す";
+    toggle.classList.toggle("primary", !court.in_use);
     toggle.addEventListener("click", async () => {
       try {
         await api.patch(`/api/sessions/${sessionToken}/courts/${court.id}`, {
@@ -66,7 +77,7 @@ async function loadCourts() {
     });
     useCell.append(toggle);
 
-    row.append(nameCell, useCell);
+    row.append(nameCell, stateCell, useCell);
     body.append(row);
   }
 }
@@ -133,10 +144,17 @@ function statusButton(member) {
     button.textContent = "休憩";
   }
   button.addEventListener("click", async () => {
-    await api.patch(`/api/members/${member.id}`, {
-      status: member.status === "resting" ? "active" : "resting",
-    });
-    await loadMembers();
+    button.disabled = true;
+    try {
+      await api.patch(`/api/members/${member.id}`, {
+        status: member.status === "resting" ? "active" : "resting",
+      });
+      showError("");
+      await loadMembers();
+    } catch (error) {
+      showError(error.message);
+      button.disabled = false;
+    }
   });
   return button;
 }
@@ -184,8 +202,15 @@ async function loadMembers() {
       remove.textContent = "削除";
       remove.className = "danger";
       remove.addEventListener("click", async () => {
-        await api.del(`/api/members/${member.id}`);
-        await loadMembers();
+        remove.disabled = true;
+        try {
+          await api.del(`/api/members/${member.id}`);
+          showError("");
+          await loadMembers();
+        } catch (error) {
+          showError(error.message);
+          remove.disabled = false;
+        }
       });
       actions.append(statusButton(member), " ", remove);
     } else {
@@ -275,8 +300,14 @@ if (!sessionToken) {
   location.replace("/");
 } else {
   rememberSessionToken(sessionToken);
-  refresh().catch(() => {
-    // 破棄された練習会の URL を開いた場合など。選び直してもらう。
-    location.replace("/");
+  refresh().catch((error) => {
+    if (error.status === 404) {
+      // 破棄された練習会の URL を開いた場合。選び直してもらう。
+      location.replace("/");
+      return;
+    }
+    // 通信の瞬断で追い出すと、location.replace なので戻ることもできない。
+    showError(`読み込めません（${error.message}）。通信を確認して開き直してください。`);
+    document.body.dataset.ready = "1";
   });
 }

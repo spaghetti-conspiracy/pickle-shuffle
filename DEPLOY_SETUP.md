@@ -198,26 +198,19 @@ staging と本番で**必ず別の合言葉にすること**。同じにする�
 
 Variables（**スキームは付けない**。ホスト名だけ）:
 
-```bash
-gh variable set STAGING_DOMAIN --body 'pickle-shuffle-staging.vercel.app'
-gh variable set PRODUCTION_DOMAIN --body 'pickle-shuffle.vercel.app'
-
-# gh が 2.36 より古いとき（`unknown command "variable"` になる）
-gh api -X POST repos/<owner>/<repo>/actions/variables \
-  -f name=STAGING_DOMAIN -f value=pickle-shuffle-staging.vercel.app
-```
-
 **`STAGING_DOMAIN` は自分で決める。** Vercel の Git 連携を止めてあるので、
 `pickle-shuffle-git-main-….vercel.app` のようなブランチ用の固定 URL は作られない。
 デプロイごとの URL（`pickle-shuffle-<英数字>-….vercel.app`）は毎回変わるので、
 **固定の別名を1つ決めて、ワークフローに張り替えさせる**。
+`PRODUCTION_DOMAIN` のほうは Vercel が既定で付ける `<プロジェクト名>.vercel.app`。
 
 ```bash
 gh variable set STAGING_DOMAIN --body 'pickle-shuffle-staging.vercel.app'
+gh variable set PRODUCTION_DOMAIN --body 'pickle-shuffle.vercel.app'
 ```
 
 `gh variable` は **gh 2.36 以降**。古い `gh`（Ubuntu 22.04 の apt は 2.4.0）では
-`gh api` を使う。
+`unknown command "variable"` になるので `gh api` を使う。
 
 ```bash
 # 新しく作るとき
@@ -227,6 +220,9 @@ gh api -X POST repos/<owner>/<repo>/actions/variables \
 # すでにあるものを変えるとき（POST だと 409 になる）
 gh api -X PATCH repos/<owner>/<repo>/actions/variables/STAGING_DOMAIN \
   -f name=STAGING_DOMAIN -f value=<新しい値>
+
+# 確認
+gh api repos/<owner>/<repo>/actions/variables
 ```
 
 `*.vercel.app` の空いている名前なら何でもよい。設定すると、以後のデプロイで
@@ -236,6 +232,20 @@ gh api -X PATCH repos/<owner>/<repo>/actions/variables/STAGING_DOMAIN \
 ## 6. main を守る
 
 CI が緑でなければ `main` に入れられないようにする。
+
+**このリポジトリは Rulesets で設定済み**（`general`、対象は既定ブランチ）。
+PR 必須・直線履歴・force push と削除の禁止に加えて、下の5つを必須チェックに
+している。確認はこちら:
+
+```bash
+gh api repos/<owner>/<repo>/rulesets
+gh api repos/<owner>/<repo>/rulesets/<id>
+```
+
+`repos/<owner>/<repo>/branches/main/protection` は**別の仕組み**で、
+Rulesets で守っていても 404 を返す。「保護されていない」と読み違えないこと。
+
+古い方式（classic branch protection）で掛けるなら:
 
 ```bash
 gh api -X PUT repos/<owner>/<repo>/branches/main/protection \
@@ -253,6 +263,10 @@ gh api -X PUT repos/<owner>/<repo>/branches/main/protection \
 boolean は `-F`、文字列は `-f`。`enforce_admins=true` にしないと、管理者は
 保護を素通りできる（1人で運用するなら、ここを true にしないと意味が無い）。
 
+Rulesets 側の同じ論点は `bypass_actors`。いまは `OrganizationAdmin` が
+`always` で入っているので、**組織管理者は赤でも force push でも通せる**。
+仕組みで塞ぎたければ、この bypass を外す。
+
 **ブラウザテストは必須チェックに入れない。** PR では走らないので（release の
 前提として `main` への push でだけ走る）、必須にすると永久にブロックされる。
 
@@ -263,11 +277,13 @@ boolean は `-F`、文字列は `-f`。`enforce_admins=true` にしないと、�
 
 出たら:
 
-1. Vercel の Deployments で URL を確認し、`STAGING_DOMAIN` に設定する
-2. staging を開いて、合言葉を入れて練習会を1つ作ってみる
-3. **DB は起動時に自動で用意される。** 初回アクセスのとき、管理者がいなければ
-   テーブルと団体・管理者を作る（確認そのものは1往復で済むので、ふだんの
-   起動は遅くならない）。
+1. `STAGING_DOMAIN` に決めた名前で staging を開く（別名はデプロイのたびに
+   張り替えられるので、URL を確認し直す必要はない）
+2. 合言葉を入れて練習会を1つ作ってみる
+3. **DB は起動時に自動で用意される。** テーブルが揃っているかと、管理者が
+   いるかを見て、足りなければそのとき作る（確認は2往復で済むので、ふだんの
+   起動は遅くならない）。**列を足した・型を変えた場合は自動では直らない**ので、
+   `DEPLOY.md` の移行スクリプトが要る。
 
    先に作っておきたい場合や、作られたことを確かめたい場合は手元から:
 

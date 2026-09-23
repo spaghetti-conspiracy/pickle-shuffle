@@ -5,15 +5,25 @@
  * 全体表示画面でリーダーが次のマッチに進めると、ここも自動で追従する。
  */
 
-import { api, currentSessionId, rememberSessionId } from "/api.js";
+import { api, currentSessionToken, rememberSessionToken, startPolling } from "/api.js";
 
 const $ = (id) => document.getElementById(id);
-const POLL_INTERVAL_MS = 2000;
+// 読むだけの画面なので、全体表示画面より緩くてよい。
+// 人数ぶんの端末が同時に叩くため、間隔を詰めすぎると通信量が効いてくる。
+const POLL_INTERVAL_MS = 5000;
 
-const sessionId = currentSessionId();
-const storageKey = `pickle.court.${sessionId}`;
+const sessionToken = currentSessionToken();
+const storageKey = `pickle.court.${sessionToken}`;
 let selectedCourtId = null;
 let lastRevision = null;
+let poller = null;
+
+/** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
+const EMPTY_COURT_MESSAGE = {
+  waiting: "まだマッチが決まっていません",
+  idle: "このコートは今回お休みです",
+  practice: "練習コートです",
+};
 
 function rememberCourt(courtId) {
   selectedCourtId = courtId;
@@ -31,6 +41,16 @@ function restoreCourt() {
   } catch {
     return null;
   }
+}
+
+/** 名前を1行に収める。長い名前は文字数に応じて縮める。 */
+function playerLabel(nickname) {
+  const label = document.createElement("div");
+  label.className = "player";
+  label.textContent = nickname;
+  // 全角1文字をほぼ1em とみなし、収まる大きさを CSS 側で逆算させる。
+  label.style.setProperty("--len", String(Math.max(nickname.length, 3)));
+  return label;
 }
 
 function renderTabs(courts) {
@@ -65,8 +85,7 @@ function renderCourt(court) {
   if (!court.match) {
     const message = document.createElement("p");
     message.className = "member-empty";
-    message.textContent =
-      court.state === "practice" ? "練習コートです" : "まだマッチが決まっていません";
+    message.textContent = EMPTY_COURT_MESSAGE[court.state] ?? "";
     container.append(message);
     return;
   }
@@ -81,10 +100,7 @@ function renderCourt(court) {
     const side = document.createElement("div");
     side.className = "member-team";
     for (const player of team) {
-      const label = document.createElement("div");
-      label.className = "player";
-      label.textContent = player.nickname;
-      side.append(label);
+      side.append(playerLabel(player.nickname));
     }
     container.append(side);
   }
@@ -112,25 +128,36 @@ function render(data) {
 
 async function refresh() {
   try {
-    const data = await api.get(`/api/sessions/${sessionId}/current`);
+    const data = await api.get(`/api/sessions/${sessionToken}/current`);
     // リーダーがマッチを進めたときだけ描き直す。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
       render(data);
     }
   } catch (error) {
-    $("status").textContent = `通信できません（${error.message}）`;
+    if (error.status === 404) {
+      showGone();
+    } else {
+      // 一時的な通信の失敗。次のポーリングで復帰する見込みなので画面は残す。
+      $("status").textContent = `通信できません（${error.message}）`;
+    }
   } finally {
     document.body.dataset.ready = "1";
   }
 }
 
-if (!sessionId) {
+/** 練習会が消えている。古いマッチを残すと、まだ有効に見えてしまう。 */
+function showGone() {
+  poller?.stop();
+  $("member").classList.add("hidden");
+  $("gone").classList.remove("hidden");
+}
+
+if (!sessionToken) {
   $("court").innerHTML = '<p class="member-empty">練習会が指定されていません</p>';
   document.body.dataset.ready = "1";
 } else {
-  rememberSessionId(sessionId);
+  rememberSessionToken(sessionToken);
   selectedCourtId = restoreCourt();
-  refresh();
-  setInterval(refresh, POLL_INTERVAL_MS);
+  poller = startPolling(refresh, POLL_INTERVAL_MS);
 }

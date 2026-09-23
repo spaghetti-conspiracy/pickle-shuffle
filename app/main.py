@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import IntegrityError
 
 from app.api import router
 from app.db import create_all
@@ -43,7 +44,22 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(AppError)
     async def _app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def _integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+        """一意制約に触れたら 409 にする。
+
+        別の端末が先に同じ操作を終えていた、という場面でしか起きない。
+        500 にすると表示画面が「通信できません」を出して止まってしまう。
+        """
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "ほかの端末が先に操作しました", "code": "conflict"},
+        )
 
     @app.middleware("http")
     async def _do_not_cache_api(request: Request, call_next):  # noqa: ANN001, ANN202

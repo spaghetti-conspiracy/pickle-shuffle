@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -144,15 +145,53 @@ def generate(
     return round_
 
 
+def _claim(db: Session, round_: Round, expected: RoundStatus, new: RoundStatus) -> bool:
+    """状態を条件付きで書き換え、実際に自分が遷移させたかを返す。
+
+    在メモリの ``round_.status`` を見てから書くと、別の端末が先にコミット
+    していても素通りしてしまう。管理画面と全体表示画面は別端末から同時に
+    使われる前提なので、WHERE で今の状態を縛り、更新できた行数で判定する。
+    """
+    result = db.execute(
+        update(Round)
+        .where(Round.id == round_.id, Round.status == expected)
+        .values(status=new, decided_at=utcnow())
+    )
+    return result.rowcount == 1
+
+
 def adopt(db: Session, round_: Round) -> Round:
     """採用する（=「開始」）。この時点で初めて統計に反映される。"""
     if round_.status is not RoundStatus.PENDING:
         raise ConflictError("このマッチはすでに決定済みです")
 
+    seq = len(stats.adopted_rounds(db, round_.session_id)) + 1
+    if not _claim(db, round_, RoundStatus.PENDING, RoundStatus.ADOPTED):
+        # 別の端末が先に開始またはスキップした。
+        db.rollback()
+        raise ConflictError("このマッチはすでに決定済みです")
+    round_.seq = seq
+
+    # 同じ練習会に pending が残っていたら、もう画面には出さない。
+    # 生成が同時に走ると pending が2本できることがあり、残したままだと
+    # 開始したマッチが隠れて、しかも二重に採用できてしまう。
+    db.execute(
+        update(Round)
+        .where(
+            Round.session_id == round_.session_id,
+            Round.status == RoundStatus.PENDING,
+            Round.id != round_.id,
+        )
+        .values(status=RoundStatus.REJECTED, decided_at=utcnow())
+    )
+
     playing = {slot.member_id for match in round_.matches for slot in match.slots}
     members = db.scalars(
         select(Member).where(
-            Member.session_id == round_.session_id, Member.status != MemberStatus.LEFT
+            Member.session_id == round_.session_id,
+            # 出場中に削除された人も、そのラウンドの記録としては残す。
+            # 外すと MatchSlot だけが残り、当時のレベルが引けなくなる（不変則2）。
+            or_(Member.status != MemberStatus.LEFT, Member.id.in_(playing)),
         )
     ).all()
 
@@ -173,10 +212,12 @@ def adopt(db: Session, round_: Round) -> Round:
             )
         )
 
-    round_.status = RoundStatus.ADOPTED
-    round_.seq = len(stats.adopted_rounds(db, round_.session_id)) + 1
-    round_.decided_at = utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        # 別の端末が同じラウンドを採用しきった、または同じ seq を取った。
+        db.rollback()
+        raise ConflictError("このマッチはすでに決定済みです") from error
     db.refresh(round_)
     return round_
 
@@ -185,8 +226,9 @@ def reject(db: Session, round_: Round) -> Round:
     """不採用にする（=「スキップ」）。統計には一切影響しない。"""
     if round_.status is not RoundStatus.PENDING:
         raise ConflictError("このマッチはすでに決定済みです")
-    round_.status = RoundStatus.REJECTED
-    round_.decided_at = utcnow()
+    if not _claim(db, round_, RoundStatus.PENDING, RoundStatus.REJECTED):
+        db.rollback()
+        raise ConflictError("このマッチはすでに決定済みです")
     db.commit()
     db.refresh(round_)
     return round_
@@ -206,7 +248,18 @@ def undo(db: Session, round_: Round) -> None:
     ).first()
     if latest is None or latest.id != round_.id:
         raise ConflictError("取り消せるのは最後に開始したマッチだけです")
-    db.delete(round_)
+    result = db.execute(
+        delete(Round).where(Round.id == round_.id, Round.status == RoundStatus.ADOPTED)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise ConflictError("このマッチはすでに取り消されています")
+    # 取り消したラウンドの統計から作られた pending は、もう根拠を失っている。
+    db.execute(
+        update(Round)
+        .where(Round.session_id == round_.session_id, Round.status == RoundStatus.PENDING)
+        .values(status=RoundStatus.REJECTED, decided_at=utcnow())
+    )
     db.commit()
 
 

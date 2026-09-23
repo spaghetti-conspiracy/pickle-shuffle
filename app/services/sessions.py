@@ -51,7 +51,21 @@ def create_session(db: Session, name: str, court_count: int = 2) -> PracticeSess
     return session
 
 
-def get_session(db: Session, session_id: int) -> PracticeSession:
+def get_session(db: Session, token: str) -> PracticeSession:
+    """URL のトークンから練習会を引く。
+
+    連番の id は外に出さないので、外から来る識別子は必ずトークン。
+    """
+    session = db.scalars(
+        select(PracticeSession).where(PracticeSession.token == token)
+    ).first()
+    if session is None:
+        raise NotFoundError("練習会が見つかりません")
+    return session
+
+
+def get_session_by_id(db: Session, session_id: int) -> PracticeSession:
+    """内部 id から引く。ラウンドなど、すでに手元に id がある場合だけ使う。"""
     session = db.get(PracticeSession, session_id)
     if session is None:
         raise NotFoundError("練習会が見つかりません")

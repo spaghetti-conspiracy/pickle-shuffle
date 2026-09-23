@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 from app.models import Court, Member, PracticeSession, Round
 from app.scheduler.domain import MemberStatus
@@ -52,7 +53,7 @@ def health() -> dict[str, str]:
 
 def _session_out(session: PracticeSession) -> SessionOut:
     return SessionOut(
-        id=session.id,
+        token=session.token,
         name=session.name,
         created_at=session.created_at,
         courts=[CourtOut.model_validate(c) for c in session.courts],
@@ -70,34 +71,34 @@ def create_session(payload: SessionCreate, db: DbSession) -> SessionOut:
     return _session_out(session)
 
 
-@router.get("/sessions/{session_id}", response_model=SessionOut)
-def get_session(session_id: int, db: DbSession) -> SessionOut:
-    return _session_out(sessions_service.get_session(db, session_id))
+@router.get("/sessions/{session_token}", response_model=SessionOut)
+def get_session(session_token: str, db: DbSession) -> SessionOut:
+    return _session_out(sessions_service.get_session(db, session_token))
 
 
-@router.patch("/sessions/{session_id}", response_model=SessionOut)
+@router.patch("/sessions/{session_token}", response_model=SessionOut)
 def update_session(
-    session_id: int, payload: SessionUpdate, db: DbSession
+    session_token: str, payload: SessionUpdate, db: DbSession
 ) -> SessionOut:
-    session = sessions_service.get_session(db, session_id)
+    session = sessions_service.get_session(db, session_token)
     sessions_service.update_session(db, session, name=payload.name)
     return _session_out(session)
 
 
-@router.delete("/sessions/{session_id}", status_code=204)
-def delete_session(session_id: int, db: DbSession) -> None:
-    sessions_service.delete_session(db, sessions_service.get_session(db, session_id))
+@router.delete("/sessions/{session_token}", status_code=204)
+def delete_session(session_token: str, db: DbSession) -> None:
+    sessions_service.delete_session(db, sessions_service.get_session(db, session_token))
 
 
-@router.patch("/sessions/{session_id}/courts/{court_id}", response_model=CourtOut)
+@router.patch("/sessions/{session_token}/courts/{court_id}", response_model=CourtOut)
 def update_court(
-    session_id: int,
+    session_token: str,
     court_id: int,
     payload: CourtUpdate,
     db: DbSession,
 ) -> CourtOut:
     """コート名の変更と、試合用から外す/戻す。"""
-    session = sessions_service.get_session(db, session_id)
+    session = sessions_service.get_session(db, session_token)
     court = sessions_service.update_court(
         db, session, court_id, name=payload.name, in_use=payload.in_use
     )
@@ -120,20 +121,20 @@ def _member_out(member: Member, plays: dict[int, int]) -> MemberOut:
     )
 
 
-@router.get("/sessions/{session_id}/members", response_model=list[MemberOut])
-def list_members(session_id: int, db: DbSession) -> list[MemberOut]:
-    sessions_service.get_session(db, session_id)
-    plays = stats_service.play_counts(db, session_id)
+@router.get("/sessions/{session_token}/members", response_model=list[MemberOut])
+def list_members(session_token: str, db: DbSession) -> list[MemberOut]:
+    session = sessions_service.get_session(db, session_token)
+    plays = stats_service.play_counts(db, session.id)
     return [
-        _member_out(m, plays) for m in sessions_service.list_members(db, session_id)
+        _member_out(m, plays) for m in sessions_service.list_members(db, session.id)
     ]
 
 
-@router.post("/sessions/{session_id}/members", response_model=MemberOut, status_code=201)
+@router.post("/sessions/{session_token}/members", response_model=MemberOut, status_code=201)
 def add_member(
-    session_id: int, payload: MemberCreate, db: DbSession
+    session_token: str, payload: MemberCreate, db: DbSession
 ) -> MemberOut:
-    session = sessions_service.get_session(db, session_id)
+    session = sessions_service.get_session(db, session_token)
     member = sessions_service.add_member(
         db,
         session,
@@ -201,7 +202,9 @@ def _revision(round_: Round | None, courts: list[Court]) -> str:
     return f"{round_.id}:{round_.status.value}|{court_part}"
 
 
-def _build_current(db: Session, session: PracticeSession) -> CurrentOut:
+def _build_current(
+    db: Session, session: PracticeSession, request: Request | None = None
+) -> CurrentOut:
     members = {m.id: m for m in sessions_service.list_members(db, session.id)}
     round_ = rounds_service.current_round(db, session.id)
 
@@ -224,6 +227,10 @@ def _build_current(db: Session, session: PracticeSession) -> CurrentOut:
             state = "match"
         elif not court.in_use:
             state = "practice"
+        elif round_ is None:
+            # まだ1度も生成していない（またはスキップ直後）。人数の問題ではないので、
+            # 「人数が足りません」と出すと設定を疑わせてしまう。
+            state = "waiting"
         else:
             state = "idle"
         court_states.append(
@@ -260,6 +267,7 @@ def _build_current(db: Session, session: PracticeSession) -> CurrentOut:
         resting=resting,
         stale_members=sorted(stale),
         duplicate_nicknames=rounds_duplicate_names(db, round_),
+        member_url=member_page_url(request, session.token) if request else "",
     )
 
 
@@ -267,58 +275,64 @@ def rounds_duplicate_names(db: Session, round_: Round | None) -> list[str]:
     return sessions_service.match_duplicate_nicknames(db, round_.id if round_ else None)
 
 
-@router.get("/sessions/{session_id}/current", response_model=CurrentOut)
-def get_current(session_id: int, db: DbSession) -> CurrentOut:
+@router.get("/sessions/{session_token}/current", response_model=CurrentOut)
+def get_current(session_token: str, request: Request, db: DbSession) -> CurrentOut:
     """表示画面が2秒おきに読むエンドポイント。"""
-    return _build_current(db, sessions_service.get_session(db, session_id))
+    return _build_current(db, sessions_service.get_session(db, session_token), request)
 
 
-@router.post("/sessions/{session_id}/rounds/generate", response_model=CurrentOut)
-def generate_round_api(session_id: int, db: DbSession) -> CurrentOut:
-    session = sessions_service.get_session(db, session_id)
+@router.post("/sessions/{session_token}/rounds/generate", response_model=CurrentOut)
+def generate_round_api(session_token: str, request: Request, db: DbSession) -> CurrentOut:
+    session = sessions_service.get_session(db, session_token)
     rounds_service.generate(db, session)
     db.refresh(session)
-    return _build_current(db, session)
+    return _build_current(db, session, request)
 
 
 @router.post("/rounds/{round_id}/adopt", response_model=CurrentOut)
-def adopt_round(round_id: int, db: DbSession) -> CurrentOut:
+def adopt_round(round_id: int, request: Request, db: DbSession) -> CurrentOut:
     round_ = rounds_service.get_round(db, round_id)
     rounds_service.adopt(db, round_)
-    return _build_current(db, sessions_service.get_session(db, round_.session_id))
+    session = sessions_service.get_session_by_id(db, round_.session_id)
+    return _build_current(db, session, request)
 
 
 @router.post("/rounds/{round_id}/reject", response_model=CurrentOut)
-def reject_round(round_id: int, db: DbSession) -> CurrentOut:
+def reject_round(round_id: int, request: Request, db: DbSession) -> CurrentOut:
     round_ = rounds_service.get_round(db, round_id)
     session_id = round_.session_id
     rounds_service.reject(db, round_)
-    return _build_current(db, sessions_service.get_session(db, session_id))
+    session = sessions_service.get_session_by_id(db, session_id)
+    return _build_current(db, session, request)
 
 
 @router.post("/rounds/{round_id}/undo", response_model=CurrentOut)
-def undo_round(round_id: int, db: DbSession) -> CurrentOut:
+def undo_round(round_id: int, request: Request, db: DbSession) -> CurrentOut:
     round_ = rounds_service.get_round(db, round_id)
     session_id = round_.session_id
     rounds_service.undo(db, round_)
-    return _build_current(db, sessions_service.get_session(db, session_id))
+    session = sessions_service.get_session_by_id(db, session_id)
+    return _build_current(db, session, request)
 
 
-def member_page_url(request: Request, session_id: int) -> str:
+def member_page_url(request: Request, session_token: str) -> str:
     """メンバー用画面の URL。
 
-    ブラウザが実際に叩いたホストから組み立てるので、手元の LAN の IP でも
-    Vercel のドメインでも、そのまま読み取れる URL になる。
+    既定ではブラウザが実際に叩いたホストから組み立てる。手元の LAN の IP でも
+    Vercel のドメインでも、そのまま読み取れる URL になるため。
+
+    ただしサーバと同じ PC で ``localhost`` として開いていると、その URL は
+    スマートフォンから届かない。そのために ``PUBLIC_BASE_URL`` で上書きできる。
     """
-    base = str(request.base_url).rstrip("/")
-    return f"{base}/member.html?session={session_id}"
+    base = settings.public_base_url or str(request.base_url).rstrip("/")
+    return f"{base}/member.html?session={session_token}"
 
 
-@router.get("/sessions/{session_id}/member-qr.svg")
-def member_qr(session_id: int, request: Request, db: DbSession) -> Response:
+@router.get("/sessions/{session_token}/member-qr.svg")
+def member_qr(session_token: str, request: Request, db: DbSession) -> Response:
     """メンバー用画面の QR コード。全体表示画面に出して、各自のスマホで読んでもらう。"""
-    sessions_service.get_session(db, session_id)
-    code = segno.make(member_page_url(request, session_id), error="m")
+    sessions_service.get_session(db, session_token)
+    code = segno.make(member_page_url(request, session_token), error="m")
     # <img> から読むので、名前空間付きの独立した SVG 文書として出力する
     # （svg_inline は HTML に直接埋め込む用で xmlns が付かず、画像として読めない）。
     buffer = BytesIO()
@@ -330,10 +344,10 @@ def member_qr(session_id: int, request: Request, db: DbSession) -> Response:
     )
 
 
-@router.get("/sessions/{session_id}/stats", response_model=StatsOut)
-def get_stats(session_id: int, db: DbSession) -> StatsOut:
-    sessions_service.get_session(db, session_id)
+@router.get("/sessions/{session_token}/stats", response_model=StatsOut)
+def get_stats(session_token: str, db: DbSession) -> StatsOut:
+    session = sessions_service.get_session(db, session_token)
     return StatsOut(
-        adopted_rounds=len(stats_service.adopted_rounds(db, session_id)),
-        play_counts=stats_service.play_counts(db, session_id),
+        adopted_rounds=len(stats_service.adopted_rounds(db, session.id)),
+        play_counts=stats_service.play_counts(db, session.id),
     )

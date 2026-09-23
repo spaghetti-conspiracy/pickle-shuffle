@@ -16,8 +16,6 @@ import {
   LEVEL_LABELS,
 } from "/api.js";
 
-const SOURCE_LABELS = { bear: "tennisbear" };
-
 function showError(message) {
   $("error").textContent = message ?? "";
 }
@@ -88,7 +86,8 @@ function removeButton(person) {
   button.className = "danger";
   button.addEventListener("click", async () => {
     const joined = person.sessions
-      ? `\n参加中の練習会が ${person.sessions} 件あります。そちらの参加者としては残ります。`
+      ? `\n参加中の練習会が ${person.sessions} 件あります。そちらの参加者としては残りますが、`
+        + `その練習会で参加者を取り込み直すと、同じ人が別人として入り直します。`
       : "";
     if (!window.confirm(`「${person.nickname}」を名簿から削除します。${joined}`)) return;
     button.disabled = true;
@@ -118,9 +117,7 @@ async function load() {
     level.append(attributeSelect(person, "level", LEVEL_LABELS));
 
     const source = document.createElement("td");
-    source.textContent = person.source
-      ? (SOURCE_LABELS[person.source] ?? person.source)
-      : "手入力";
+    source.textContent = person.source_label ?? "手入力";
 
     const sessions = document.createElement("td");
     sessions.textContent = person.sessions ? `${person.sessions}件` : "—";

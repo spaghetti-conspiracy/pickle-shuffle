@@ -326,7 +326,11 @@ async function act(run) {
     render(data);
   } catch (error) {
     gate.bump();
-    if (error.code === "conflict") {
+    if (error.status === 401) {
+      // 合言葉が切れた。**ここでトップ画面へ飛ばさない。** 常時表示のタブレットで
+      // 試合中に表示が消えると、読み上げているカードごと失う。
+      setNotice("合言葉が切れました。トップ画面から開き直してください", true);
+    } else if (error.code === "conflict") {
       lastRevision = null; // 他端末が先に進めた。次のポーリングで追従する。
     } else {
       // 人数不足（409）もここに来る。黙って捨てると、押しても何も起きない

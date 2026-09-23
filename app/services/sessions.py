@@ -214,6 +214,7 @@ def add_member(
     session: PracticeSession,
     person: Person,
     *,
+    by_import: bool = False,
     commit: bool = True,
 ) -> Member:
     """台帳の人を、この練習会の参加者に加える。
@@ -224,6 +225,15 @@ def add_member(
 
     途中参加でも公平になるよう下駄を履かせる。
     """
+    already = db.scalars(
+        select(Member).where(
+            Member.session_id == session.id, Member.person_id == person.id
+        )
+    ).first()
+    if already is not None and already.status is not MemberStatus.LEFT:
+        # 二重に入ると、同じ人が別のコートの2試合に同時に割り当てられ得る。
+        raise ValidationError(f"「{already.nickname}」はすでにこの練習会に入っています")
+
     # 下駄は参加時点の active メンバーの最小 adjusted。これが無いと
     # 遅刻者が追いつくまで何ラウンドも連続出場してしまう。
     actives = [
@@ -232,6 +242,18 @@ def add_member(
         if p.status is MemberStatus.ACTIVE
     ]
     baseline = min((p.adjusted for p in actives), default=0)
+
+    if already is not None:
+        # 一度外した人が戻ってきた。**新しい行は作らず、離脱した行を戻す。**
+        # 別の行にすると同じ人の記録が2つに割れ、それまでの出場が無かった
+        # ことになって、その人だけ連続出場することになる。
+        already.status = MemberStatus.ACTIVE
+        already.baseline = baseline
+        already.joined_by_import = by_import
+        if commit:
+            db.commit()
+            db.refresh(already)
+        return already
 
     taken = {
         member.nickname
@@ -245,6 +267,7 @@ def add_member(
         gender=person.gender,
         level=person.level,
         baseline=baseline,
+        joined_by_import=by_import,
     )
     db.add(member)
     if not commit:
@@ -257,9 +280,16 @@ def add_member(
     return member
 
 
-def get_member(db: Session, member_id: int) -> Member:
+def get_member(db: Session, member_id: int, owner: Owner | None = None) -> Member:
+    """参加者を id で引く。
+
+    `owner` を渡すと、その団体のものかを確かめる。連番の id を外から渡せる
+    endpoint は、ここで団体を確かめないと、よその団体の行に手が届いてしまう。
+    """
     member = db.get(Member, member_id)
     if member is None:
+        raise NotFoundError("メンバーが見つかりません")
+    if owner is not None and owner_of(db, get_session_by_id(db, member.session_id)).id != owner.id:
         raise NotFoundError("メンバーが見つかりません")
     return member
 
@@ -288,7 +318,9 @@ def update_member(
     if status is not None:
         member.status = status
 
-    # 属性は台帳にも上げる。直す場所がどちらでも同じ結果になるように。
+    # 属性は台帳にも上げる。次の練習会でも直した値が使われるように。
+    # **ほかの練習会には降ろさない。** 進行中の別の練習会の表示が、
+    # こちらの操作で勝手に変わらないようにするため（不変則12）。
     # **名前は上げない。** 練習会の中での番号付けや読み上げ用の言い換えで、
     # 台帳の名前を書き換えてしまわないため。
     people_service.sync_from_member(db, member)
@@ -468,20 +500,18 @@ def import_participants(
 
         member = by_person.get(person.id)
         if member is None:
-            member = add_member(db, session, person, commit=False)
+            member = add_member(db, session, person, by_import=True, commit=False)
             by_person[person.id] = member
             added.append(member.nickname)
         else:
             unchanged += 1
 
     # 一覧から消えた人は休憩にする。削除すると統計が壊れる（仕様）。
-    # 手で登録した人（取り込み元を持たない人）は対象にしない。
+    # **手で足した人は対象にしない。** 先週取り込んだ人を今週は手で足す、という
+    # ことがあるので、台帳に取り込み元があるかどうかでは判定できない。
     rested: list[str] = []
     for member in existing:
-        if member.person_id is None or member.person_id in seen:
-            continue
-        person = db.get(Person, member.person_id)
-        if person is None or person.external_id is None:
+        if not member.joined_by_import or member.person_id in seen:
             continue
         if member.status is MemberStatus.ACTIVE:
             member.status = MemberStatus.RESTING

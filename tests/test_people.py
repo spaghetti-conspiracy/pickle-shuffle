@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.errors import NotFoundError
+from app.errors import NotFoundError, ValidationError
 from app.models import Member, Owner, Person
 from app.scheduler.domain import Gender, Level, MemberStatus, RoundStatus
 from app.services import people as people_service
@@ -317,3 +317,88 @@ def test_a_member_row_survives_its_person(db, owner):
 
     assert stats_service.play_counts(db, session.id) == counts
     assert db.get(Member, members[0].id) is not None
+
+
+# ---------------------------------------------------------------------------
+# レビューで見つかった欠陥の回帰テスト
+# ---------------------------------------------------------------------------
+
+
+def test_fixing_an_attribute_keeps_the_local_nickname(db, owner):
+    """台帳で属性だけ直したとき、練習会で付け直した呼び名を消さない。
+
+    読み上げ用の言い換えは台帳に上げない約束なので、下りで上書きすると
+    黙って消えてしまう。呼び名を写すのは、台帳で実際に改名したときだけ。
+    """
+    session, members = _session_with(db, owner, count=4)
+    sessions_service.update_member(db, members[0], nickname="タロちゃん")
+    person = db.get(Person, members[0].person_id)
+
+    people_service.update_person(db, owner, person, level=Level.BEGINNER)
+
+    db.refresh(members[0])
+    assert members[0].nickname == "タロちゃん", "練習会で付けた呼び名が戻っている"
+    assert members[0].level is Level.BEGINNER, "属性は反映されていない"
+
+
+def test_the_same_person_cannot_join_twice(db, owner):
+    """同じ人を1つの練習会に二重登録させない。
+
+    二重に入ると、同じ人が別のコートの2試合に同時に割り当てられ得る。
+    """
+    session = sessions_service.create_session(db, owner, "二重", 2)
+    person = _person(db, owner, "ジロウ")
+    sessions_service.add_member(db, session, person)
+
+    with pytest.raises(ValidationError):
+        sessions_service.add_member(db, session, person)
+    db.rollback()
+
+    assert len(sessions_service.list_members(db, session.id)) == 1
+
+
+def test_the_same_person_can_join_another_session(db, owner):
+    """別の練習会には入れる。日時の違うイベントを先に作っておく運用がある。"""
+    person = _person(db, owner, "サブロウ")
+    first = sessions_service.create_session(db, owner, "金曜", 2)
+    second = sessions_service.create_session(db, owner, "土曜", 2)
+
+    sessions_service.add_member(db, first, person)
+    sessions_service.add_member(db, second, person)
+
+    assert people_service.session_counts(db, owner)[person.id] == 2
+
+
+def test_someone_who_left_comes_back_to_the_same_row(db, owner):
+    """一度外した人をまた選んだら、その行がそのまま復帰する。
+
+    別の行にすると同じ人の記録が2つに割れ、それまでの出場が無かったことに
+    なって、その人だけ連続出場することになる。
+    """
+    session, members = _session_with(db, owner)
+    rounds_service.adopt(db, rounds_service.generate(db, session))
+    played = stats_service.play_counts(db, session.id)
+    sessions_service.remove_member(db, members[0])
+
+    person = db.get(Person, members[0].person_id)
+    back = sessions_service.add_member(db, session, person)
+
+    assert back.id == members[0].id, "新しい行ができている"
+    assert back.status is MemberStatus.ACTIVE
+    assert len(sessions_service.list_members(db, session.id)) == 8
+    assert stats_service.play_counts(db, session.id)[back.id] == played[members[0].id]
+
+
+def test_an_admin_without_an_owner_is_refused(db, owner):
+    """管理者に団体が紐づいていなければ、既定の団体へは落とさない。
+
+    落とすと、団体が増えた瞬間に「よその団体が見える」へ化ける。
+    """
+    from app.models import Admin
+
+    stray = Admin(login="stray", password_hash="x")
+    db.add(stray)
+    db.commit()
+
+    with pytest.raises(NotFoundError):
+        current_owner(db, stray)

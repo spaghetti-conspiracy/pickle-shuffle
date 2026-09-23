@@ -50,15 +50,19 @@ def split_external_key(key: str) -> tuple[str, str]:
 def source_of(key: str | None) -> str | None:
     """識別子の取り込み元。手で登録した人は None。
 
-    一覧で「取り込み／手登録」を見分けるために使う。
+    一覧で「取り込み／手登録」を見分けるために使う。**壊れた値でも落ちない。**
+    DB に不正な行が1つあるだけで一覧が丸ごと出なくなるのは割に合わない。
     """
-    if key is None:
+    if key is None or not _KEY.fullmatch(key):
         return None
-    return split_external_key(key)[0]
+    return key.partition(":")[0]
 
 
 def raw_id_of(key: str | None) -> str | None:
-    """識別子のうち、向こうの ID の部分。画面に出すのはイベント ID だけ。"""
-    if key is None:
+    """識別子のうち、向こうの ID の部分。画面に出すのはイベント ID だけ。
+
+    `source_of` と同じ理由で、壊れた値でも落ちない。
+    """
+    if key is None or not _KEY.fullmatch(key):
         return None
-    return split_external_key(key)[1]
+    return key.partition(":")[2]

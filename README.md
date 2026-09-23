@@ -115,6 +115,21 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost/pickle
 既存のテーブルには列を足しません（CLAUDE.md 不変則8）。テーブルを変えるときは
 サービスを止めて、`scripts/` に置いた使い捨ての移行スクリプトを流してください。
 
+### Phase 11（メンバー台帳の分離）の移行
+
+既存の DB があるなら、**1度だけ**次を実行します。
+
+```bash
+docker compose exec db pg_dump -U pickle pickle > backup.sql   # 先にバックアップ
+docker compose stop web
+DATABASE_URL=... .venv/bin/python scripts/migrate_phase11.py   # --dry-run で下見できる
+docker compose up -d
+```
+
+`member_profiles` の属性が `people` に移り、参加者が台帳に繋がります。
+古い列（`tennisbear_*`）と `member_profiles` は**消さずに残す**ので、
+動作を確かめてから落ち着いて消せます。
+
 ## 記録を破棄する
 
 管理画面から練習会を削除する。まるごと消すなら:

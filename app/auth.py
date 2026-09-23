@@ -59,23 +59,38 @@ def issue_cookie(admin_id: int, password_hash: str) -> str:
     return f"{admin_id}:{_sign(admin_id, password_hash)}"
 
 
+MAX_COOKIE_LENGTH = 128
+"""受け取るクッキーの長さの上限。これを超える値は見るまでもなく捨てる。"""
+
+MAX_ADMIN_ID = 2**63 - 1
+"""id の上限。DB の整数に収まらない値を渡されて落ちないようにする。"""
+
+
 def read_cookie(value: str | None) -> int | None:
     """クッキーから管理者の id を取り出す。署名はまだ見ない。
 
     誰の行を読めばよいかが分からないと照合できないので、2段階になる。
+
+    **細工された値で落ちないこと。** 合言葉を持たない相手が自由に送れる入口
+    なので、桁あふれや非 ASCII で 500 を返すようでは門の意味が薄れる。
     """
-    if not value:
+    if not value or len(value) > MAX_COOKIE_LENGTH:
         return None
-    admin_id, _, _ = value.partition(":")
-    try:
-        return int(admin_id)
-    except ValueError:
+    admin_id, separator, signature = value.partition(":")
+    if not separator or not admin_id.isdecimal() or not signature.isascii():
         return None
+    number = int(admin_id)
+    return number if 0 < number <= MAX_ADMIN_ID else None
 
 
 def cookie_matches(value: str, admin_id: int, password_hash: str) -> bool:
-    """クッキーがその管理者のものか。"""
-    return hmac.compare_digest(value, issue_cookie(admin_id, password_hash))
+    """クッキーがその管理者のものか。
+
+    比較は bytes で行う。`compare_digest` は非 ASCII の str を渡すと
+    例外になるので、細工された値で 500 にしないため。
+    """
+    expected = issue_cookie(admin_id, password_hash)
+    return hmac.compare_digest(value.encode("utf-8", "replace"), expected.encode())
 
 
 def _sign(admin_id: int, password_hash: str) -> str:

@@ -16,7 +16,13 @@ from app import auth, tennisbear
 from app.config import IS_SERVERLESS, settings
 from app.db import get_db
 from app.errors import ConflictError, UnauthorizedError, ValidationError
-from app.external import SOURCE_TENNISBEAR, external_key, raw_id_of, source_of
+from app.external import (
+    SOURCE_LABELS,
+    SOURCE_TENNISBEAR,
+    external_key,
+    raw_id_of,
+    source_of,
+)
 from app.models import Member, Owner, Person, PracticeSession, Round, TimerState
 from app.scheduler.domain import MemberStatus, RoundStatus
 from app.scheduler.generator import PLAYERS_PER_MATCH
@@ -74,7 +80,8 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 
 def require_admin(
-    db: DbSession, pickle_admin: Annotated[str | None, Cookie()] = None
+    db: DbSession,
+    pickle_admin: Annotated[str | None, Cookie(alias=auth.COOKIE_NAME)] = None,
 ) -> Owner:
     """合言葉を通しているか見て、いま見ている団体を返す。
 
@@ -298,13 +305,17 @@ def import_members(
 
 @router.post("/rounds/{round_id}/timer/{action}", response_model=CurrentOut)
 def control_timer(
-    round_id: int, action: str, request: Request, db: DbSession
+    round_id: int,
+    action: str,
+    request: Request,
+    db: DbSession,
+    owner: CurrentOwner,
 ) -> CurrentOut:
     """試合時計を操作する。一時停止・再開・中断。
 
     開始は採用（`/adopt`）と同時なので、ここには無い。
     """
-    round_ = rounds_service.get_round(db, round_id)
+    round_ = rounds_service.get_round(db, round_id, owner.id)
     if round_.status is not RoundStatus.ADOPTED:
         # 開始前のラウンドを消音すると、始めた瞬間から鳴らない試合になる。
         raise ConflictError("始まっていないマッチの時計は操作できません")
@@ -324,9 +335,9 @@ def control_timer(
 
 @router.patch("/members/{member_id}", response_model=MemberOut)
 def update_member(
-    member_id: int, payload: MemberUpdate, db: DbSession
+    member_id: int, payload: MemberUpdate, db: DbSession, owner: CurrentOwner
 ) -> MemberOut:
-    member = sessions_service.get_member(db, member_id)
+    member = sessions_service.get_member(db, member_id, owner)
     sessions_service.update_member(
         db,
         member,
@@ -339,8 +350,9 @@ def update_member(
 
 
 @router.delete("/members/{member_id}", status_code=204)
-def remove_member(member_id: int, db: DbSession) -> None:
-    sessions_service.remove_member(db, sessions_service.get_member(db, member_id))
+def remove_member(member_id: int, db: DbSession, owner: CurrentOwner) -> None:
+    """この練習会の参加者リストから外す。**台帳からは消えない。**"""
+    sessions_service.remove_member(db, sessions_service.get_member(db, member_id, owner))
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +372,7 @@ def _person_out(person: Person, *, duplicate: bool, sessions: int) -> PersonOut:
         gender=person.gender,
         level=person.level,
         source=people_service.source_label(person),
+        source_label=SOURCE_LABELS.get(people_service.source_label(person) or ""),
         duplicate=duplicate,
         sessions=sessions,
     )
@@ -621,16 +634,16 @@ def generate_round_api(session_token: str, request: Request, db: DbSession) -> C
 
 
 @router.post("/rounds/{round_id}/adopt", response_model=CurrentOut)
-def adopt_round(round_id: int, request: Request, db: DbSession) -> CurrentOut:
-    round_ = rounds_service.get_round(db, round_id)
+def adopt_round(round_id: int, request: Request, db: DbSession, owner: CurrentOwner) -> CurrentOut:
+    round_ = rounds_service.get_round(db, round_id, owner.id)
     rounds_service.adopt(db, round_)
     session = sessions_service.get_session_by_id(db, round_.session_id)
     return _build_current(db, session, request)
 
 
 @router.post("/rounds/{round_id}/reject", response_model=CurrentOut)
-def reject_round(round_id: int, request: Request, db: DbSession) -> CurrentOut:
-    round_ = rounds_service.get_round(db, round_id)
+def reject_round(round_id: int, request: Request, db: DbSession, owner: CurrentOwner) -> CurrentOut:
+    round_ = rounds_service.get_round(db, round_id, owner.id)
     session_id = round_.session_id
     rounds_service.reject(db, round_)
     session = sessions_service.get_session_by_id(db, session_id)
@@ -638,8 +651,8 @@ def reject_round(round_id: int, request: Request, db: DbSession) -> CurrentOut:
 
 
 @router.post("/rounds/{round_id}/undo", response_model=CurrentOut)
-def undo_round(round_id: int, request: Request, db: DbSession) -> CurrentOut:
-    round_ = rounds_service.get_round(db, round_id)
+def undo_round(round_id: int, request: Request, db: DbSession, owner: CurrentOwner) -> CurrentOut:
+    round_ = rounds_service.get_round(db, round_id, owner.id)
     session_id = round_.session_id
     rounds_service.undo(db, round_)
     session = sessions_service.get_session_by_id(db, session_id)

@@ -268,11 +268,19 @@ def undo(db: Session, round_: Round) -> None:
     db.commit()
 
 
-def get_round(db: Session, round_id: int) -> Round:
-    """ラウンドを取得する。"""
+def get_round(db: Session, round_id: int, owner_id: int | None = None) -> Round:
+    """ラウンドを取得する。
+
+    `owner_id` を渡すと、その団体のものかを確かめる。連番の id を外から渡せる
+    endpoint は、ここで団体を確かめないと、よその団体の行に手が届いてしまう。
+    """
     round_ = db.get(Round, round_id)
     if round_ is None:
         raise NotFoundError("マッチが見つかりません")
+    if owner_id is not None:
+        session = db.get(PracticeSession, round_.session_id)
+        if session is None or session.owner_id != owner_id:
+            raise NotFoundError("マッチが見つかりません")
     return round_
 
 

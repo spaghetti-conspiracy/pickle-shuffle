@@ -17,6 +17,7 @@ from app.errors import UpstreamError, ValidationError
 from app.external import SOURCE_TENNISBEAR, external_key
 from app.models import Person
 from app.scheduler.domain import Gender, Level, MemberStatus
+from app.services import people as people_service
 from app.services import sessions as sessions_service
 from app.services.owners import current_owner
 from app.tennisbear import (
@@ -671,3 +672,42 @@ def test_two_devices_cannot_bind_different_events(db, session_factory):
     members = sessions_service.list_members(db, session.id)
     assert [member.nickname for member in members] == ["先の人"]
     assert all(member.status is MemberStatus.ACTIVE for member in members)
+
+
+def test_a_hand_added_member_is_not_put_to_rest(db):
+    """手で足した参加者を、取り込みで休憩にしない。
+
+    先週取り込んだ人を今週は手で足す、ということがある。台帳に取り込み元が
+    あるかどうかで判定すると、その人が一覧に居ないだけで休憩に回されてしまう。
+    """
+    owner = current_owner(db)
+    first = _session(db, "先週")
+    sessions_service.import_participants(
+        db, owner, first, [_participant(101, "あき")], event_id=None
+    )
+    person = people_service.find_by_external(db, owner, "bear:101")
+
+    second = _session(db, "今週")
+    sessions_service.add_member(db, second, person)  # 手で足す
+
+    result = sessions_service.import_participants(
+        db, owner, second, [_participant(202, "べつの人")], event_id=None
+    )
+
+    assert result.resting == [], "手で足した人が休憩にされている"
+    added = sessions_service.list_members(db, second.id)
+    assert all(m.status is MemberStatus.ACTIVE for m in added)
+
+
+def test_someone_who_was_imported_is_still_put_to_rest(db):
+    """取り込みで入った人は、一覧から消えたら休憩にする（従来どおり）。"""
+    owner = current_owner(db)
+    session = _session(db)
+    sessions_service.import_participants(
+        db, owner, session, [_participant(1, "のこる"), _participant(2, "きえる")],
+        event_id=None,
+    )
+    result = sessions_service.import_participants(
+        db, owner, session, [_participant(1, "のこる")], event_id=None
+    )
+    assert result.resting == ["きえる"]

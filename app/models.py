@@ -204,6 +204,15 @@ class Member(Base):
     """
 
     __tablename__ = "members"
+    __table_args__ = (
+        UniqueConstraint("session_id", "person_id", name="uq_member_person"),
+    )
+    """同じ人を1つの練習会に二重登録させない。
+
+    二重に入ると、同じ人が別のコートの2試合に同時に割り当てられ得る。
+    画面が選択肢から外すだけでは、二重送信や2端末からの同時操作で通ってしまう。
+    `person_id` が NULL の行（台帳から消された人）は、この制約に縛られない。
+    """
 
     id: Mapped[int] = mapped_column(primary_key=True)
     session_id: Mapped[int] = mapped_column(
@@ -224,6 +233,14 @@ class Member(Base):
     （ニックネームは識別子ではない・不変則14）。
     **属性の写しはこの行にも持つ。** 台帳の行が消えても、参加者と過去の記録が
     無傷で残るようにするため。
+    """
+
+    joined_by_import: Mapped[bool] = mapped_column(Boolean, default=False)
+    """取り込みでこの練習会に入ったか。
+
+    再取り込みで「一覧から消えた人」を休憩にするとき、手で足した人まで
+    巻き込まないために要る。台帳に取り込み元があるかどうかでは判定できない
+    （先週取り込んだ人を、今週は手で足すことがある）。
     """
 
     baseline: Mapped[int] = mapped_column(Integer, default=0)

@@ -8,8 +8,11 @@
 import {
   $,
   api,
+  createAlarm,
+  createClock,
   createGate,
   currentSessionToken,
+  formatClock,
   playerLabel,
   rememberSessionToken,
   startPolling,
@@ -26,6 +29,43 @@ let lastRevision = null;
 let poller = null;
 let lastData = null;
 const gate = createGate();
+const clock = createClock();
+//: サーバのプロセスが変わったら知らせる。応答が途切れたり、作り直した直後で
+//: 記録が消えていたりするのを、黙っていると「時計が狂った」と見えてしまう。
+let serverInstance = null;
+const alarm = createAlarm();
+const CLOCK_INTERVAL_MS = 250;
+let confirming = false;
+let alarmDone = false;
+//: この端末で鳴らすかどうか。ほかの人の端末には影響しない。
+const SOUND_KEY = "pickle.sound";
+//: この端末で止めたラウンド。全体画面と違い、止めても他の端末は鳴り続ける。
+let silencedRound = null;
+
+function soundEnabled() {
+  try {
+    return localStorage.getItem(SOUND_KEY) !== "off";
+  } catch {
+    return true; // 保存できない端末でも、既定どおり鳴らす
+  }
+}
+
+function setSoundEnabled(on) {
+  try {
+    localStorage.setItem(SOUND_KEY, on ? "on" : "off");
+  } catch {
+    // 覚えられなくても、その場では効く
+  }
+}
+
+/** この端末で鳴らすべきか。 */
+function shouldRingHere() {
+  return (
+    clock.shouldRing() &&
+    soundEnabled() &&
+    silencedRound !== (lastData && lastData.round_id)
+  );
+}
 
 /** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
 const EMPTY_COURT_MESSAGE = {
@@ -68,6 +108,7 @@ function renderTabs(courts) {
     tab.setAttribute("aria-selected", String(selected));
     tab.addEventListener("click", () => {
       rememberCourt(court.id);
+      alarm.unlock(); // 音を出す許可は、利用者の操作の中でしか取れない
       // 手元のデータで描き直す。通信の往復を待たせない。
       // 体育館の WiFi は人数ぶんの端末がぶら下がって遅くなるので、
       // 待たせるとタップが効かない画面になる。表示に必要な情報は
@@ -119,7 +160,10 @@ function renderCourt(court, highlightBeginners) {
 
 function render(data) {
   lastData = data;
-  const highlightBeginners = data.session.highlight_beginners;
+  // **この画面では初心者の色分けをしない。** 緑や「初」のバッジを出すと、
+  // 内部にレベルの情報があることが全員に分かってしまう。
+  // アルゴリズムの確認に使う表示なので、リーダーの全体表示画面だけでよい。
+  const highlightBeginners = false;
   document.title = `${data.session.name} — コート表示`;
   $("session-name").textContent = data.session.name;
   $("status").textContent = data.round_status === "adopted" ? "試合中" : "次のマッチ";
@@ -139,6 +183,75 @@ function render(data) {
   $("waiting").textContent = parts.join("　/　");
 }
 
+/** 残り時間。手元で数えるので、同期の間も動く。
+ *
+ * 同期のたびに少し飛んだり巻き戻ったりするが、全体画面と合っていればよい。
+ * 手元で時間切れになったら、その場でサーバに確かめに行き、
+ * 向こうでも切れていたら鳴らす。手元の時計だけで鳴らすと、
+ * 一時停止されていたのに鳴る、といったことが起きる。
+ */
+function renderClock() {
+  const element = $("clock");
+  const state = clock.state();
+  $("clock-title").textContent = clock.hasLimit() ? "残り時間" : "経過時間";
+  // 鳴っている間だけ出す。どの経路を通っても判断がぶれないよう先に決める。
+  $("alarm-off").classList.toggle("hidden", !alarm.ringing);
+  $("clock-box").classList.toggle(
+    "hidden",
+    state === "stopped" && clock.elapsed() <= 0,
+  );
+  if (state === "stopped") {
+    // 中断されたあとも「試合終了」と出す。開始前とは区別する。
+    if (clock.elapsed() > 0) {
+      element.textContent = "試合終了";
+      element.dataset.state = "over";
+    } else {
+      element.textContent = "";
+      element.removeAttribute("data-state");
+    }
+    return;
+  }
+  if (!clock.hasLimit()) {
+    element.textContent = `経過 ${formatClock(clock.elapsed())}`;
+    element.dataset.state = state === "paused" ? "paused" : "running";
+    return;
+  }
+  const left = clock.remaining();
+  element.textContent = left <= 0 ? "試合終了" : formatClock(left);
+  element.dataset.state = left <= 0 ? "over" : state === "paused" ? "paused" : "running";
+
+  if (left <= 0 && state === "running" && !alarmDone && !confirming && soundEnabled()) {
+    confirmTimeout();
+  }
+  // 鳴っている間は、止められていないかを細かく確かめる。
+  // ふだんの5秒間隔だと、リーダーが止めてから最大5秒鳴り続ける。
+  if (alarm.ringing && !confirming) confirmTimeout();
+  if (left > 0) alarmDone = false;
+}
+
+/** 手元で切れたので、サーバに確かめてから鳴らす。 */
+async function confirmTimeout() {
+  confirming = true;
+  try {
+    const data = await api.get(`/api/sessions/${sessionToken}/current`);
+    if (serverInstance !== null && data.server_instance !== serverInstance) {
+      setNotice("サーバが再起動しました。表示を確認してください", true);
+    }
+    serverInstance = data.server_instance;
+    clock.sync(data.timer);
+    lastData = data;
+    if (shouldRingHere() && !alarmDone) {
+      alarmDone = true;
+      alarm.start();
+    }
+    if (!shouldRingHere()) alarm.stop();
+  } catch {
+    // つながらなければ次のポーリングでやり直す。鳴らさない。
+  } finally {
+    confirming = false;
+  }
+}
+
 function setNotice(message) {
   const element = $("offline");
   element.textContent = message;
@@ -152,6 +265,7 @@ async function refresh() {
     if (gate.isStale(token)) return;
     setNotice("");
     lastData = data;
+    clock.sync(data.timer);
     // リーダーがマッチを進めたときだけ描き直す。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
@@ -184,4 +298,22 @@ if (!sessionToken) {
   rememberSessionToken(sessionToken);
   selectedCourtId = restoreCourt();
   poller = startPolling(refresh, POLL_INTERVAL_MS);
+  setInterval(renderClock, CLOCK_INTERVAL_MS);
+
+  $("sound-on").checked = soundEnabled();
+  $("sound-on").addEventListener("change", (event) => {
+    setSoundEnabled(event.target.checked);
+    if (!event.target.checked) alarm.stop();
+    else alarm.unlock();
+    renderClock();
+  });
+
+  // この端末だけ止める。ほかの人の端末は鳴ったままにしておく。
+  $("alarm-off").addEventListener("click", () => {
+    silencedRound = lastData ? lastData.round_id : null;
+    alarm.stop();
+    renderClock();
+  });
+  // 最初の操作で音の下ごしらえをする（ブラウザは操作なしに鳴らさない）。
+  document.addEventListener("pointerdown", () => alarm.unlock(), { once: true });
 }

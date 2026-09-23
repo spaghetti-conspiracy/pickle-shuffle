@@ -38,6 +38,11 @@ class SessionCreate(BaseModel):
 class SessionUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=NAME_MAX)
     highlight_beginners: bool | None = None
+    timer_minutes: int | None = Field(default=None, ge=3, le=15)
+    """1試合の持ち時間（分）。無制限にするには unlimited を使う。"""
+
+    unlimited: bool = False
+    """持ち時間を無制限にする。timer_minutes を None にしたいときの指定。"""
 
 
 class SessionOut(BaseModel):
@@ -53,6 +58,9 @@ class SessionOut(BaseModel):
 
     tennisbear_event_id: int | None
     """取り込み元のイベント。一度取り込んだら以後はここに固定する。"""
+
+    timer_minutes: int | None
+    """1試合の持ち時間（分）。None なら無制限。"""
 
     courts: list[CourtOut]
 
@@ -114,11 +122,40 @@ class PlayerOut(BaseModel):
     nickname: str
     gender: Gender
     level: Level
+    unavailable: bool = False
+    """表示中のマッチに入っているが、もう出られない人。
+
+    生成のあとに休憩へ回ったか、外れた人。表示画面では暗くして、
+    読み上げるときに気づけるようにする。マッチ自体は動かさない（不変則12）。
+    """
 
 
 class MatchOut(BaseModel):
     team_a: list[PlayerOut]
     team_b: list[PlayerOut]
+
+
+class TimerOut(BaseModel):
+    """試合時計の状態。
+
+    **revision には含めない。** 経過秒は毎回変わるので、含めると表示画面が
+    毎回描き直されてしまう。画面側はこの値だけ別に受け取って更新する。
+    """
+
+    state: str
+    """stopped / running / paused。"""
+
+    limit_seconds: int | None
+    """持ち時間。None なら無制限。"""
+
+    elapsed_seconds: int
+    """動いていた秒数。画面はここを起点に自分で数える。"""
+
+    timed_out: bool
+    """持ち時間を過ぎたか。無制限のときは常に False。"""
+
+    alarm_silenced: bool
+    """時間切れの音を止めたか。どの端末で止めても全員に伝える。"""
 
 
 class CourtStateOut(BaseModel):
@@ -144,6 +181,13 @@ class CourtStateOut(BaseModel):
 
 
 class CurrentOut(BaseModel):
+    server_instance: str
+    """サーバのプロセスを識別する値。再起動すると変わる。
+
+    表示画面はこれを覚えていて、変わったら知らせる。黙っていると、
+    途切れた通信や消えた記録が「時計が狂った」ようにしか見えない。
+    """
+
     session: SessionOut
     round_id: int | None
     round_status: RoundStatus | None
@@ -155,6 +199,9 @@ class CurrentOut(BaseModel):
     マッチの組み合わせはメンバーの編集では動かないため（不変則12）、
     これが変わって描き直しても試合中に組み合わせが変わることはない。
     """
+
+    timer: TimerOut
+    """試合時計。revision には入れない（経過秒が毎回変わるため）。"""
 
     courts: list[CourtStateOut]
     waiting: list[PlayerOut]

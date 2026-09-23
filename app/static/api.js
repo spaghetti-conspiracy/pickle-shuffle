@@ -143,6 +143,8 @@ export function playerLabel(player, highlightBeginners) {
   label.className = "player";
   label.textContent = player.nickname;
   label.dataset.tone = toneOf(player, highlightBeginners);
+  // 休憩に回った人・外れた人は暗くする。読み上げる前に気づけるように。
+  if (player.unavailable) label.dataset.unavailable = "1";
   const width = [...player.nickname].reduce(
     (total, ch) => total + (/[\x20-\x7e\uff61-\uff9f]/.test(ch) ? 0.5 : 1),
     0,
@@ -165,5 +167,125 @@ export function createGate() {
     },
     token: () => generation,
     isStale: (token) => token !== generation,
+  };
+}
+
+/** 残り時間・経過時間の表示。mm:ss。 */
+export function formatClock(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  return `${minutes}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** サーバから受け取った時計を、手元で進める。
+ *
+ * ポーリングは2〜5秒に1回なので、そのままだと表示が飛び飛びになる。
+ * 受け取った時点を基準に、経過を自分で足して滑らかに見せる。
+ * 次の同期で少し巻き戻ることがあるが、そろっていればよい。
+ *
+ * 絶対時刻ではなく performance.now() を使う。端末とサーバの時計が
+ * ずれていても影響を受けない。
+ */
+export function createClock() {
+  let timer = null;
+  let receivedAt = 0;
+  return {
+    sync(next) {
+      timer = next;
+      receivedAt = performance.now();
+    },
+    /** いまの経過秒。動いていなければ受け取った値のまま。 */
+    elapsed() {
+      if (timer === null) return 0;
+      if (timer.state !== "running") return timer.elapsed_seconds;
+      return timer.elapsed_seconds + (performance.now() - receivedAt) / 1000;
+    },
+    /** 残り秒。無制限なら null。 */
+    remaining() {
+      if (timer === null || timer.limit_seconds === null) return null;
+      return timer.limit_seconds - this.elapsed();
+    },
+    isTimedOut() {
+      const left = this.remaining();
+      return left !== null && left <= 0;
+    },
+    /** いま鳴らすべきか。止めた指示が来ていれば鳴らさない。 */
+    shouldRing() {
+      return (
+        timer !== null &&
+        timer.state === "running" &&
+        this.isTimedOut() &&
+        !timer.alarm_silenced
+      );
+    },
+    state() {
+      return timer === null ? "stopped" : timer.state;
+    },
+    hasLimit() {
+      return timer !== null && timer.limit_seconds !== null;
+    },
+  };
+}
+
+/** キッチンタイマーのような音。音声ファイルを置かずに合成する。
+ *
+ * ブラウザは操作なしに音を鳴らさないので、最初の操作で下ごしらえをする。
+ */
+export function createAlarm() {
+  let context = null;
+  let stopAt = 0;
+  let timer = null;
+
+  const unlock = () => {
+    if (context === null) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (Ctor) context = new Ctor();
+    }
+    if (context && context.state === "suspended") context.resume();
+  };
+
+  const beep = () => {
+    if (!context) return;
+    const now = context.currentTime;
+    // 2回の短い電子音を1組にする。キッチンタイマーらしい鳴り方。
+    for (const offset of [0, 0.18]) {
+      const osc = context.createOscillator();
+      const gain = context.createGain();
+      osc.type = "square";
+      osc.frequency.value = 2000;
+      gain.gain.setValueAtTime(0.0001, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.25, now + offset + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.12);
+      osc.connect(gain).connect(context.destination);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.14);
+    }
+  };
+
+  return {
+    unlock,
+    /** 鳴らし始める。既定で30秒たったら自分で止まる。 */
+    start(seconds = 30) {
+      unlock();
+      if (timer !== null) return;
+      stopAt = performance.now() + seconds * 1000;
+      beep();
+      timer = setInterval(() => {
+        if (performance.now() >= stopAt) {
+          this.stop();
+          return;
+        }
+        beep();
+      }, 600);
+    },
+    stop() {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    },
+    get ringing() {
+      return timer !== null;
+    },
   };
 }

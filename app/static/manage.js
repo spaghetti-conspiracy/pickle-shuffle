@@ -23,6 +23,17 @@ function showError(message) {
   $("member-error").textContent = message ?? "";
 }
 
+/** 持ち時間の選択肢。1分刻みで3〜15分と、無制限。 */
+function fillTimerOptions() {
+  const select = $("timer-minutes");
+  for (let minutes = 3; minutes <= 15; minutes += 1) {
+    const option = document.createElement("option");
+    option.value = String(minutes);
+    option.textContent = `${minutes}分`;
+    select.append(option);
+  }
+}
+
 async function loadSession() {
   const session = await api.get(`/api/sessions/${sessionToken}`);
   document.title = `${session.name} — 練習会の管理`;
@@ -41,6 +52,8 @@ async function loadSession() {
     event.readOnly = false;
     $("import-note").textContent = "";
   }
+  $("timer-minutes").value =
+    session.timer_minutes === null ? "unlimited" : String(session.timer_minutes);
   return session;
 }
 
@@ -254,6 +267,21 @@ async function refresh() {
   document.body.dataset.ready = "1";
 }
 
+/** 持ち時間の変更。試合の最中でも、その場で残り時間に反映される
+ * （締切ではなく経過を持っているため）。 */
+$("timer-minutes").addEventListener("change", async (event) => {
+  const value = event.target.value;
+  const body =
+    value === "unlimited" ? { unlimited: true } : { timer_minutes: Number(value) };
+  try {
+    await api.patch(`/api/sessions/${sessionToken}`, body);
+    showError("");
+  } catch (error) {
+    showError(error.message);
+    await loadSession();
+  }
+});
+
 $("highlight-beginners").addEventListener("change", async (event) => {
   try {
     await api.patch(`/api/sessions/${sessionToken}`, {
@@ -358,6 +386,7 @@ if (!sessionToken) {
   location.replace("/");
 } else {
   rememberSessionToken(sessionToken);
+  fillTimerOptions();
   refresh().catch((error) => {
     if (error.status === 404) {
       // 破棄された練習会の URL を開いた場合。選び直してもらう。

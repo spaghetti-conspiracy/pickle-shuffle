@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Annotated
@@ -15,8 +16,9 @@ from sqlalchemy.orm import Session
 from app import tennisbear
 from app.config import settings
 from app.db import get_db
-from app.models import Member, PracticeSession, Round
-from app.scheduler.domain import MemberStatus
+from app.errors import ValidationError
+from app.models import Member, PracticeSession, Round, TimerState
+from app.scheduler.domain import MemberStatus, RoundStatus
 from app.scheduler.generator import PLAYERS_PER_MATCH
 from app.schemas import (
     CourtOut,
@@ -35,10 +37,18 @@ from app.schemas import (
     SessionOut,
     SessionUpdate,
     StatsOut,
+    TimerOut,
 )
 from app.services import rounds as rounds_service
 from app.services import sessions as sessions_service
 from app.services import stats as stats_service
+
+#: このプロセスが起動したときに決める値。再起動すると変わる。
+#:
+#: 表示画面はこれを覚えていて、変わったら「サーバが再起動しました」と伝える。
+#: 再起動をまたぐと、応答が一時的に途切れたり、作り直した直後なら記録が
+#: 消えていたりする。黙っていると「時計が狂った」ようにしか見えない。
+SERVER_INSTANCE = secrets.token_hex(8)
 
 router = APIRouter(prefix="/api")
 
@@ -64,6 +74,7 @@ def _session_out(session: PracticeSession) -> SessionOut:
         created_at=session.created_at,
         highlight_beginners=session.highlight_beginners,
         tennisbear_event_id=session.tennisbear_event_id,
+        timer_minutes=session.timer_minutes,
         courts=[CourtOut.model_validate(c) for c in session.courts],
     )
 
@@ -94,6 +105,8 @@ def update_session(
         session,
         name=payload.name,
         highlight_beginners=payload.highlight_beginners,
+        timer_minutes=payload.timer_minutes,
+        unlimited=payload.unlimited,
     )
     return _session_out(session)
 
@@ -190,6 +203,29 @@ def import_members(
     )
 
 
+@router.post("/rounds/{round_id}/timer/{action}", response_model=CurrentOut)
+def control_timer(
+    round_id: int, action: str, request: Request, db: DbSession
+) -> CurrentOut:
+    """試合時計を操作する。一時停止・再開・中断。
+
+    開始は採用（`/adopt`）と同時なので、ここには無い。
+    """
+    round_ = rounds_service.get_round(db, round_id)
+    handlers = {
+        "pause": rounds_service.pause_timer,
+        "resume": rounds_service.resume_timer,
+        "stop": rounds_service.stop_timer,
+        "silence": rounds_service.silence_alarm,
+    }
+    handler = handlers.get(action)
+    if handler is None:
+        raise ValidationError("その操作はできません")
+    handler(db, round_)
+    session = sessions_service.get_session_by_id(db, round_.session_id)
+    return _build_current(db, session, request)
+
+
 @router.patch("/members/{member_id}", response_model=MemberOut)
 def update_member(
     member_id: int, payload: MemberUpdate, db: DbSession
@@ -227,12 +263,13 @@ def delete_profile(nickname: str, db: DbSession) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _player_out(member: Member) -> PlayerOut:
+def _player_out(member: Member, *, unavailable: bool = False) -> PlayerOut:
     return PlayerOut(
         id=member.id,
         nickname=member.nickname,
         gender=member.gender,
         level=member.level,
+        unavailable=unavailable,
     )
 
 
@@ -268,6 +305,32 @@ def _stale_member_ids(
     return sorted(stale, key=lambda i: members[i].nickname)
 
 
+def _timer_out(session: PracticeSession, round_: Round | None) -> TimerOut:
+    """試合時計の現在値。
+
+    残り時間ではなく経過時間を返す。画面側はここを起点に自分で数えるので、
+    ポーリングの間隔より細かく動かせる。持ち時間の設定を試合中に変えても、
+    経過はそのままなので残り時間だけが変わる。
+    """
+    limit = session.timer_minutes * 60 if session.timer_minutes else None
+    if round_ is None or round_.status is not RoundStatus.ADOPTED:
+        return TimerOut(
+            state=TimerState.STOPPED.value,
+            limit_seconds=limit,
+            elapsed_seconds=0,
+            timed_out=False,
+            alarm_silenced=False,
+        )
+    elapsed = rounds_service.elapsed_seconds(round_)
+    return TimerOut(
+        state=round_.timer_state.value,
+        limit_seconds=limit,
+        elapsed_seconds=elapsed,
+        timed_out=bool(limit) and elapsed >= limit,
+        alarm_silenced=round_.timer_alarm_silenced,
+    )
+
+
 def _revision_of(payload: CurrentOut) -> str:
     """表示すべき内容そのものから導く指紋。
 
@@ -279,7 +342,8 @@ def _revision_of(payload: CurrentOut) -> str:
     メンバーを編集しても `MatchSlot` は変わらないので、組み合わせは動かない。
     動くのは名前・色・注意書きといった表示だけで、それは動いてほしい。
     """
-    body = payload.model_dump_json(exclude={"revision"})
+    # timer は毎回変わるので指紋に入れない。入れると2秒ごとに描き直しになる。
+    body = payload.model_dump_json(exclude={"revision", "timer"})
     return hashlib.blake2b(body.encode("utf-8"), digest_size=8).hexdigest()
 
 
@@ -298,7 +362,11 @@ def _build_current(
                 member = members.get(slot.member_id)
                 if member is None:
                     continue
-                teams[slot.team_index].append(_player_out(member))
+                teams[slot.team_index].append(
+                    _player_out(
+                        member, unavailable=member.status is not MemberStatus.ACTIVE
+                    )
+                )
                 playing.add(member.id)
             match_by_court[match.court_id] = MatchOut(team_a=teams[0], team_b=teams[1])
 
@@ -347,10 +415,12 @@ def _build_current(
     stale = [members[i].nickname for i in stale_ids]
 
     payload = CurrentOut(
+        server_instance=SERVER_INSTANCE,
         session=_session_out(session),
         round_id=round_.id if round_ else None,
         round_status=round_.status if round_ else None,
         revision="",
+        timer=_timer_out(session, round_),
         courts=court_states,
         waiting=waiting,
         resting=resting,

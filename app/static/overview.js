@@ -8,8 +8,11 @@
 import {
   $,
   api,
+  createAlarm,
+  createClock,
   createGate,
   currentSessionToken,
+  formatClock,
   playerLabel,
   rememberSessionToken,
   startPolling,
@@ -24,6 +27,16 @@ let lastRevision = null;
 let busy = false;
 let poller = null;
 const gate = createGate();
+const clock = createClock();
+//: サーバのプロセスが変わったら知らせる。応答が途切れたり、作り直した直後で
+//: 記録が消えていたりするのを、黙っていると「時計が狂った」と見えてしまう。
+let serverInstance = null;
+const alarm = createAlarm();
+//: 時計は毎秒描き直す。ポーリング（2秒）より細かく動かすため。
+const CLOCK_INTERVAL_MS = 250;
+let alarmDone = false;
+//: いま時計を見ているラウンド。変わったらアラームを仕切り直す。
+let clockRoundId = null;
 
 /** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
 const EMPTY_COURT_MESSAGE = {
@@ -81,6 +94,8 @@ function renderLegend(highlightBeginners) {
     ["female", "女性"],
     ["other", "未設定"],
   ];
+  // 緑表示が off のときは「初心者」という項目自体を出さない。
+  // 出すと、その区分が内部にあることが読み上げの場で伝わってしまう。
   if (highlightBeginners) items.push(["beginner", "初心者"]);
   const legend = $("legend");
   legend.innerHTML = "";
@@ -118,7 +133,10 @@ function render(data) {
     warnings.push(`同名 ${data.duplicate_nicknames.join(" ")}`);
   }
   if (data.stale_members.length) {
-    warnings.push(`変更あり（次のマッチから反映） ${data.stale_members.join(" ")}`);
+    // 何が変わったかは書かない。レベルを直したことが周りに伝わってしまう。
+    warnings.push(
+      `登録情報が更新されました（次のマッチから反映） ${data.stale_members.join(" ")}`,
+    );
   }
   $("warnings").textContent = warnings.join("　");
 
@@ -133,6 +151,8 @@ function render(data) {
 
   renderLegend(highlightBeginners);
   renderMemberUrl(data.member_url);
+  // 「次のマッチ」を出すかは時計で決まる。描き直しのたびに戻さない。
+  renderClock();
 }
 
 /** 画面の下部に出す短い知らせ。
@@ -143,6 +163,74 @@ function render(data) {
  * 通るまで残す。ポーリングが成功したくらいで消してはいけない。
  */
 let noticeIsFromAction = false;
+
+/** 残り時間と、時計まわりのボタン。
+ *
+ * ここは revision の外で毎回更新する。経過秒を revision に入れると
+ * 2秒ごとに全体が描き直され、読み上げの最中にちらつくため。
+ */
+function renderClock() {
+  const element = $("clock");
+  const state = clock.state();
+  const running = state === "running" || state === "paused";
+  // 中断したあとも「試合終了」と出したいので、開始前かどうかで分ける。
+  const everStarted = state !== "stopped" || clock.elapsed() > 0;
+
+  const write = (main, note = "") => {
+    element.textContent = main;
+    if (note) {
+      const small = document.createElement("span");
+      small.className = "clock-note";
+      small.textContent = note;
+      element.append(small);
+    }
+  };
+
+  // 見出しは、持ち時間があるかどうかで変える。
+  $("clock-title").textContent = clock.hasLimit() ? "残り時間" : "経過時間";
+  $("clock-box").classList.toggle("hidden", !running && !everStarted);
+
+  if (!running) {
+    if (everStarted) {
+      write("試合終了", "「次のマッチ」で次に進みます");
+      element.dataset.state = "over";
+    } else {
+      write("");
+      element.removeAttribute("data-state");
+    }
+  } else if (!clock.hasLimit()) {
+    write(formatClock(clock.elapsed()), state === "paused" ? "一時停止中" : "経過");
+    element.dataset.state = state === "paused" ? "paused" : "running";
+  } else {
+    const left = clock.remaining();
+    if (left <= 0) {
+      write("試合終了", `時間です（${formatClock(-left)} 超過）`);
+    } else {
+      write(formatClock(left), state === "paused" ? "一時停止中" : "");
+    }
+    element.dataset.state =
+      left <= 0 ? "over" : state === "paused" ? "paused" : "running";
+  }
+
+  const timedOut = clock.isTimedOut();
+  // 試合中は次へ進ませない。中断するか時間切れになるまで押せないようにする。
+  // 押せると、読み上げている途中で組み合わせが変わってしまう。
+  $("next").classList.toggle("hidden", running && !timedOut);
+  $("pause").classList.toggle("hidden", !running || timedOut);
+  $("pause").textContent = state === "paused" ? "再開" : "一時停止";
+  // 時間切れのあとは「アラームオフ」と「次のマッチ」だけにする。
+  $("stop-timer").classList.toggle("hidden", !running || timedOut);
+  $("alarm-off").classList.toggle("hidden", !alarm.ringing);
+
+  // 鳴らすのは1回だけ。止めたあとに鳴り直さない。
+  if (clock.shouldRing() && !alarmDone) {
+    alarmDone = true;
+    alarm.start();
+  }
+  // ほかの端末で止められたら、こちらも止める。
+  if (!clock.shouldRing()) alarm.stop();
+  if (!timedOut) alarmDone = false;
+}
 
 function setNotice(message, fromAction = false) {
   noticeIsFromAction = Boolean(message) && fromAction;
@@ -160,6 +248,18 @@ async function poll() {
     // 描くと、押した直後に前のマッチへ巻き戻って見える。
     if (gate.isStale(token)) return;
     if (!noticeIsFromAction) setNotice("");
+    // 時計は revision に関係なく、毎回合わせ直す。
+    if (serverInstance !== null && data.server_instance !== serverInstance) {
+      setNotice("サーバが再起動しました。表示を確認してください", true);
+    }
+    serverInstance = data.server_instance;
+    if (data.round_id !== clockRoundId) {
+      // 次の試合に移ったら、前の試合の鳴動を持ち越さない。
+      clockRoundId = data.round_id;
+      alarm.stop();
+      alarmDone = false;
+    }
+    clock.sync(data.timer);
     // 描き直すべきときだけ描き直す。revision は表示すべき中身の指紋。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
@@ -193,6 +293,13 @@ async function act(run) {
   try {
     const data = await run();
     gate.bump();
+    if (data.round_id !== clockRoundId) {
+      // 次の試合に移ったら、前の試合の鳴動を持ち越さない。
+      clockRoundId = data.round_id;
+      alarm.stop();
+      alarmDone = false;
+    }
+    clock.sync(data.timer);
     setNotice("");
     lastRevision = data.revision;
     render(data);
@@ -212,8 +319,34 @@ async function act(run) {
   await poll();
 }
 
+$("pause").addEventListener("click", () =>
+  act(async () => {
+    const action = clock.state() === "paused" ? "resume" : "pause";
+    const current = await api.get(`/api/sessions/${sessionToken}/current`);
+    return api.post(`/api/rounds/${current.round_id}/timer/${action}`);
+  }),
+);
+
+$("stop-timer").addEventListener("click", () =>
+  act(async () => {
+    alarm.stop();
+    const current = await api.get(`/api/sessions/${sessionToken}/current`);
+    return api.post(`/api/rounds/${current.round_id}/timer/stop`);
+  }),
+);
+
+$("alarm-off").addEventListener("click", () =>
+  act(async () => {
+    alarm.stop();
+    const current = await api.get(`/api/sessions/${sessionToken}/current`);
+    return api.post(`/api/rounds/${current.round_id}/timer/silence`);
+  }),
+);
+
 $("start").addEventListener("click", () =>
   act(async () => {
+    // 音を出す許可は、利用者の操作の中でしか取れない。
+    alarm.unlock();
     const current = await api.get(`/api/sessions/${sessionToken}/current`);
     if (current.round_status !== "pending") return current;
     return api.post(`/api/rounds/${current.round_id}/adopt`);
@@ -237,4 +370,5 @@ if (!sessionToken) {
   qr.addEventListener("error", () => qr.classList.add("hidden"));
   qr.src = `/api/sessions/${sessionToken}/member-qr.svg`;
   poller = startPolling(poll, POLL_INTERVAL_MS);
+  setInterval(renderClock, CLOCK_INTERVAL_MS);
 }

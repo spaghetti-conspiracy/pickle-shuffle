@@ -19,7 +19,13 @@
   </div>
 
   <div class="overview-body">
-    <div id="courts" class="court-list"></div>
+    <div class="court-column">
+      <div id="courts" class="court-list"></div>
+      <section id="clock-box" class="clock-box hidden">
+        <h2 id="clock-title" class="clock-title">残り時間</h2>
+        <div id="clock" class="clock"></div>
+      </section>
+    </div>
 
     <div class="side">
       <section class="qr">
@@ -50,6 +56,9 @@
 </div>
 
 <div id="action-bar" class="action-bar">
+  <button id="alarm-off" class="danger hidden">アラームオフ</button>
+  <button id="pause" class="hidden">一時停止</button>
+  <button id="stop-timer" class="hidden">中断</button>
   <button id="start" class="primary">開始</button>
   <button id="next">次のマッチ</button>
 </div>

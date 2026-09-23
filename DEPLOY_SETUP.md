@@ -199,6 +199,10 @@ Variables（**スキームは付けない**。ホスト名だけ）:
 ```bash
 gh variable set STAGING_DOMAIN --body 'pickle-shuffle-staging.vercel.app'
 gh variable set PRODUCTION_DOMAIN --body 'pickle-shuffle.vercel.app'
+
+# gh が 2.36 より古いとき（`unknown command "variable"` になる）
+gh api -X POST repos/<owner>/<repo>/actions/variables \
+  -f name=STAGING_DOMAIN -f value=pickle-shuffle-staging.vercel.app
 ```
 
 **`STAGING_DOMAIN` は自分で決める。** Vercel の Git 連携を止めてあるので、
@@ -208,6 +212,14 @@ gh variable set PRODUCTION_DOMAIN --body 'pickle-shuffle.vercel.app'
 
 ```bash
 gh variable set STAGING_DOMAIN --body 'pickle-shuffle-staging.vercel.app'
+```
+
+`gh variable` は **gh 2.36 以降**。古い `gh`（Ubuntu 22.04 の apt は 2.4.0）では
+`gh api` を使う。
+
+```bash
+gh api -X POST repos/<owner>/<repo>/actions/variables \
+  -f name=STAGING_DOMAIN -f value=pickle-shuffle-staging.vercel.app
 ```
 
 `*.vercel.app` の空いている名前なら何でもよい。設定すると、以後のデプロイで

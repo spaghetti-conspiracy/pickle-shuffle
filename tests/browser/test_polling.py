@@ -104,12 +104,17 @@ def test_the_overview_backs_off_when_left_alone(page, server):
               busy: m.chooseInterval(0),
               justUsed: m.chooseInterval(29 * 60 * 1000),
               abandoned: m.chooseInterval(31 * 60 * 1000),
+              pokeWhenBusy: m.shouldPoke(0),
+              pokeWhenAbandoned: m.shouldPoke(31 * 60 * 1000),
             };
         }"""
     )
     assert decision["busy"] == 2000, decision
     assert decision["justUsed"] == 2000, "使っている間に伸ばしている"
     assert decision["abandoned"] == 60000, "置き忘れても伸びない"
+    # 伸びたあとで人が触ったら、仕掛かっている待ちを捨てて計算し直す。
+    assert decision["pokeWhenAbandoned"] is True, "触っても元の速さに戻らない"
+    assert decision["pokeWhenBusy"] is False, "触るたびに待ちを捨てている"
 
 
 def test_the_member_screen_decides_by_the_clock(page, server, watch):
@@ -137,3 +142,95 @@ def test_the_member_screen_decides_by_the_clock(page, server, watch):
     assert decision["running"] == 15000, "試合中に間引けていない"
     assert decision["endgame"] == 3000, "終わりが近いのに間引いている"
     assert decision["unlimited"] == 15000, "無制限で急いでいる"
+
+
+def test_touching_an_idled_screen_restores_the_pace(page, server):
+    """**伸ばしたあとで人が触ったら、すぐ元の速さに戻ること。**
+
+    間隔を決め直すだけでは足りない。すでに仕掛かっている待ちは満了まで
+    そのままなので、置き忘れから戻ってきたリーダーが画面を触っても
+    最大1分は追従が遅いまま、という状態になる。
+    """
+    token = _make_match(page, server)
+    page.goto(f"{server}/overview.html?session={token}", wait_until="networkidle")
+    page.wait_for_selector("body[data-ready]", timeout=15000)
+
+    result = page.evaluate(
+        """async () => {
+            const m = await import('/api.js');
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            let delay = 5000;
+            let runs = 0;
+            const poller = m.startPolling(() => { runs += 1; }, () => delay);
+            const afterStart = runs;
+            // 伸びている間に条件が変わった（人が触った）。
+            delay = 50;
+            await sleep(300);
+            const withoutPoke = runs;
+            poller.poke();
+            await sleep(300);
+            const withPoke = runs;
+            poller.stop();
+            return { afterStart, withoutPoke, withPoke };
+        }"""
+    )
+    assert result["afterStart"] == 1, "起動時に1回走っていない"
+    assert result["withoutPoke"] == 1, "仕掛かっている待ちが勝手に短くなっている"
+    assert result["withPoke"] >= 3, f"触っても元の速さに戻らない: {result}"
+
+
+def test_polling_stops_while_the_screen_is_hidden(page, server):
+    """見えていない間は止め、戻したら再開すること。二重には走らせない。
+
+    `setInterval` から `setTimeout` の連鎖に書き換えたので、止め方と
+    再開のしかたがいちばん壊れやすい。
+    """
+    token = _make_match(page, server)
+    page.goto(f"{server}/overview.html?session={token}", wait_until="networkidle")
+    page.wait_for_selector("body[data-ready]", timeout=15000)
+
+    result = page.evaluate(
+        """async () => {
+            const m = await import('/api.js');
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+            const hide = (value) =>
+              Object.defineProperty(document, 'hidden', {
+                configurable: true, get: () => value,
+              });
+            let runs = 0;
+            const poller = m.startPolling(() => { runs += 1; }, 60);
+            await sleep(300);
+            const visible = runs;
+
+            hide(true);
+            document.dispatchEvent(new Event('visibilitychange'));
+            await sleep(300);
+            const hiddenGrowth = runs - visible;
+
+            hide(false);
+            document.dispatchEvent(new Event('visibilitychange'));
+            await sleep(300);
+            const backGrowth = runs - visible - hiddenGrowth;
+
+            // 戻ったときの通知が重なっても連鎖は1本のままであること。
+            const beforeDouble = runs;
+            document.dispatchEvent(new Event('visibilitychange'));
+            document.dispatchEvent(new Event('visibilitychange'));
+            await sleep(600);
+            const doubleGrowth = runs - beforeDouble;
+
+            poller.stop();
+            const atStop = runs;
+            await sleep(200);
+            const afterStop = runs - atStop;
+            delete document.hidden;
+            return { visible, hiddenGrowth, backGrowth, doubleGrowth, afterStop };
+        }"""
+    )
+    assert result["visible"] >= 3, f"見えている間に走っていない: {result}"
+    assert result["hiddenGrowth"] == 0, f"隠れている間も聞いている: {result}"
+    assert result["backGrowth"] >= 3, f"戻しても再開していない: {result}"
+    # 通知が重なっても即時の1回ずつが増えるだけで、連鎖は1本のまま。
+    # 2本になれば倍の速さで増える（600ms は `visible` の測定窓の2倍）。
+    assert result["doubleGrowth"] <= 2 * result["visible"] + 5, f"連鎖が増えている: {result}"
+    assert result["afterStop"] == 0, f"止めても走り続けている: {result}"

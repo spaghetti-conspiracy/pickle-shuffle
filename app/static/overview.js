@@ -322,6 +322,15 @@ export function chooseInterval(sinceLastChangeMs) {
   return sinceLastChangeMs >= POLL_IDLE_AFTER_MS ? POLL_IDLE_MS : POLL_INTERVAL_MS;
 }
 
+/** 人が触ったときに、仕掛かっている待ちを捨てて計算し直す必要があるか。
+ *
+ * 伸びていなければ何もしなくてよい。伸びていた場合だけ、満了を待たずに
+ * その場で短い間隔へ戻す（待たせると最大1分、追従が遅いままになる）。
+ */
+export function shouldPoke(sinceLastChangeMs) {
+  return sinceLastChangeMs >= POLL_IDLE_AFTER_MS;
+}
+
 function pollInterval() {
   return chooseInterval(performance.now() - lastChangeAt);
 }
@@ -438,9 +447,14 @@ function start() {
   qr.src = `/api/sessions/${sessionToken}/member-qr.svg`;
   poller = startPolling(poll, pollInterval);
   // 人が触ったら、また見ている人がいるということ。すぐ元の速さに戻す。
+  //
+  // 時刻を書き換えるだけでは足りない。すでに仕掛かっている60秒の待ちは
+  // そのまま満了してしまうので、**その場で計算し直させる**。
   for (const event of ["pointerdown", "keydown"]) {
     document.addEventListener(event, () => {
+      const wasIdle = shouldPoke(performance.now() - lastChangeAt);
       lastChangeAt = performance.now();
+      if (wasIdle) poller?.poke();
     });
   }
   setInterval(renderClock, CLOCK_INTERVAL_MS);

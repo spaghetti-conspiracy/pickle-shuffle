@@ -5,14 +5,34 @@
  * （再スケジュールはリーダーの意図、その拡散は自動）。
  */
 
-import { api, currentSessionId, rememberSessionId } from "/api.js";
+import { api, currentSessionToken, rememberSessionToken, startPolling } from "/api.js";
 
 const $ = (id) => document.getElementById(id);
 const POLL_INTERVAL_MS = 2000;
+// リーダーが操作する画面。押した結果は応答で即座に反映されるので、
+// このポーリングは他端末の操作に追従するためのもの。
 
-const sessionId = currentSessionId();
+const sessionToken = currentSessionToken();
 let lastRevision = null;
 let busy = false;
+let poller = null;
+
+/** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
+const EMPTY_COURT_MESSAGE = {
+  waiting: "「マッチを作る」を押すと組み合わせが出ます",
+  idle: "人数が足りません",
+  practice: "練習コート",
+};
+
+/** 名前を1行に収める。長い名前は文字数に応じて縮める。 */
+function playerLabel(nickname) {
+  const label = document.createElement("div");
+  label.className = "player";
+  label.textContent = nickname;
+  // 全角1文字をほぼ1em とみなし、収まる大きさを CSS 側で逆算させる。
+  label.style.setProperty("--len", String(Math.max(nickname.length, 3)));
+  return label;
+}
 
 function renderCourt(court) {
   const element = document.createElement("div");
@@ -37,31 +57,32 @@ function renderCourt(court) {
       const side = document.createElement("div");
       side.className = "team";
       for (const player of team) {
-        const label = document.createElement("div");
-        label.className = "player";
-        label.textContent = player.nickname;
-        side.append(label);
+        side.append(playerLabel(player.nickname));
       }
       body.append(side);
     }
   } else {
     element.classList.add("empty");
-    if (court.state === "practice") {
-      element.classList.add("practice");
-      body.textContent = "練習コート";
-    } else {
-      body.textContent = "人数が足りません";
-    }
+    if (court.state === "practice") element.classList.add("practice");
+    body.textContent = EMPTY_COURT_MESSAGE[court.state] ?? "";
   }
 
   element.append(body);
   return element;
 }
 
+/** QR と同じ URL を文字でも出す。読み上げにも使うし、届かないときに気づける。 */
+function renderMemberUrl(url) {
+  $("member-url").textContent = url;
+  const unreachable = /\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(url);
+  $("qr-warning").classList.toggle("hidden", !unreachable);
+}
+
+
 function render(data) {
   document.title = `${data.session.name} — 全体表示`;
   $("session-name").textContent = data.session.name;
-  $("admin-link").href = `/?session=${sessionId}`;
+  $("admin-link").href = `/manage.html?session=${sessionToken}`;
 
   const courts = $("courts");
   courts.innerHTML = "";
@@ -79,15 +100,22 @@ function render(data) {
   }
   $("warnings").textContent = warnings.join("　");
 
+  // まだ1度も作っていないのに「次のマッチ」と出ると、何を押せばよいか分からない。
   const pending = data.round_status === "pending";
   $("start").classList.toggle("hidden", !pending);
-  $("next").textContent = pending ? "スキップ" : "次のマッチ";
+  if (pending) {
+    $("next").textContent = "スキップ";
+  } else {
+    $("next").textContent = data.round_id === null ? "マッチを作る" : "次のマッチ";
+  }
+
+  renderMemberUrl(data.member_url);
 }
 
 async function poll() {
   if (busy) return;
   try {
-    const data = await api.get(`/api/sessions/${sessionId}/current`);
+    const data = await api.get(`/api/sessions/${sessionToken}/current`);
     // ラウンドとコートの状態が変わったときだけ描き直す。
     // メンバーを編集しただけでは revision が変わらないので、試合中に画面は動かない。
     if (data.revision !== lastRevision) {
@@ -95,10 +123,23 @@ async function poll() {
       render(data);
     }
   } catch (error) {
-    $("warnings").textContent = `通信できません（${error.message}）`;
+    if (error.status === 404) {
+      showGone();
+    } else {
+      // 一時的な通信の失敗。次のポーリングで復帰する見込みなので画面は残す。
+      $("warnings").textContent = `通信できません（${error.message}）`;
+    }
   } finally {
     document.body.dataset.ready = "1";
   }
+}
+
+/** 練習会が消えている。古いマッチや QR を残すと、まだ有効に見えてしまう。 */
+function showGone() {
+  poller?.stop();
+  $("overview").classList.add("hidden");
+  $("action-bar").classList.add("hidden");
+  $("gone").classList.remove("hidden");
 }
 
 /** 操作の結果は即座に描き直す。他端末が先に操作していたら取り直す。 */
@@ -123,7 +164,7 @@ async function act(run) {
 
 $("start").addEventListener("click", () =>
   act(async () => {
-    const current = await api.get(`/api/sessions/${sessionId}/current`);
+    const current = await api.get(`/api/sessions/${sessionToken}/current`);
     if (current.round_status !== "pending") return current;
     return api.post(`/api/rounds/${current.round_id}/adopt`);
   }),
@@ -132,15 +173,18 @@ $("start").addEventListener("click", () =>
 // スキップも「次のマッチ」も、やることは生成。
 // 生成済みの pending があれば自動的に不採用になる（統計には影響しない）。
 $("next").addEventListener("click", () =>
-  act(() => api.post(`/api/sessions/${sessionId}/rounds/generate`)),
+  act(() => api.post(`/api/sessions/${sessionToken}/rounds/generate`)),
 );
 
-if (!sessionId) {
+if (!sessionToken) {
   $("warnings").textContent = "練習会が選ばれていません。メンバー登録画面から開いてください。";
   document.body.dataset.ready = "1";
 } else {
-  rememberSessionId(sessionId);
-  $("qr").src = `/api/sessions/${sessionId}/member-qr.svg`;
-  poll();
-  setInterval(poll, POLL_INTERVAL_MS);
+  rememberSessionToken(sessionToken);
+  // 読み込めたときだけ出す。練習会が消えているとリンク切れのアイコンが出てしまう。
+  const qr = $("qr");
+  qr.addEventListener("load", () => qr.classList.remove("hidden"));
+  qr.addEventListener("error", () => qr.classList.add("hidden"));
+  qr.src = `/api/sessions/${sessionToken}/member-qr.svg`;
+  poller = startPolling(poll, POLL_INTERVAL_MS);
 }

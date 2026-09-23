@@ -353,7 +353,13 @@ def test_the_internal_id_is_not_exposed(client):
     """連番の内部 id は外に出さない。"""
     session = create_session(client)
     assert "id" not in session
-    assert set(session) == {"token", "name", "created_at", "courts"}
+    assert set(session) == {
+        "token",
+        "name",
+        "created_at",
+        "courts",
+        "highlight_beginners",
+    }
 
 
 def test_member_qr_points_at_the_host_the_browser_used(client):

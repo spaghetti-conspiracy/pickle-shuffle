@@ -81,11 +81,14 @@ def update_session(
     session: PracticeSession,
     *,
     name: str | None = None,
+    highlight_beginners: bool | None = None,
 ) -> PracticeSession:
     if name is not None:
         if not name.strip():
             raise ValidationError("練習会の名前を入力してください")
         session.name = name.strip()
+    if highlight_beginners is not None:
+        session.highlight_beginners = highlight_beginners
     db.commit()
     db.refresh(session)
     return session

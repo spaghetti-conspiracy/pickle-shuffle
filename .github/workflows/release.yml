@@ -90,6 +90,7 @@ jobs:
           ref: ${{ needs.guard.outputs.sha }}
 
       - name: Vercel へ出す（Production）
+        id: deploy
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -101,29 +102,36 @@ jobs:
           npx --yes vercel@$VERCEL_CLI_VERSION deploy --prod --token "$VERCEL_TOKEN" > deploy.out
           # staging と同じ理由で、出力の形が変わっても取れるようにする。
           url=$(jq -er '.deployment.url' < deploy.out 2>/dev/null || true)
-          [ -n "$url" ] || url=$(grep -oE 'https://[A-Za-z0-9.-]+\.vercel\.app' deploy.out | tail -1)
+          # `|| true` が要る。`set -e` 下では、grep が見つけられないと
+          # **この行で落ちて**、下の `::error::` も `cat` も出ない。
+          [ -n "$url" ] || url=$(grep -oE '[A-Za-z0-9.-]+\.vercel\.app' deploy.out | tail -1 || true)
+          # JSON はスキーム付き、平文はホスト名だけのことがある。形を揃える。
+          [ -n "$url" ] && url="https://${url#https://}" || true
           case "$url" in
             https://*) ;;
             *) echo "::error::デプロイ先の URL を取れなかった"; cat deploy.out; exit 1 ;;
           esac
           echo "production: $url"
           echo "production: $url" >> "$GITHUB_STEP_SUMMARY"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: 出たものが応答するか
         env:
           PRODUCTION_URL: ${{ vars.PRODUCTION_DOMAIN }}
+          DEPLOYED_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
-          if [ -z "$PRODUCTION_URL" ]; then
-            echo "::warning::PRODUCTION_DOMAIN が未設定。出したものを確かめていない"
-            {
-              echo "### 本番の確認を省略した"
-              echo ""
-              echo "\`PRODUCTION_DOMAIN\`（Variables）が未設定です。"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          # **確認を飛ばさない。** `PRODUCTION_DOMAIN` が未設定でも、いま出した
+          # デプロイの URL は分かっている。本番を一度も確かめずに緑にするのは、
+          # いちばん確かめたい回（最初のリリース）を素通りさせることになる。
+          if [ -n "$PRODUCTION_URL" ]; then
+            base="https://$PRODUCTION_URL"
+          else
+            base="$DEPLOYED_URL"
+            echo "::warning::PRODUCTION_DOMAIN が未設定。出したデプロイの URL で確かめる"
           fi
-          base="https://$PRODUCTION_URL"
+          test -n "$base" || { echo "::error::確かめる先が分からない"; exit 1; }
+          echo "確認先: $base"
 
           # 1. 起動しているか
           for i in $(seq 1 20); do
@@ -136,13 +144,18 @@ jobs:
           #    接続文字列が違っても移行を流し忘れても 200 が返ってしまう。
           #    存在しない練習会を引く経路なら、合言葉なしで SELECT を1回通せる。
           #    404 が返れば DB に届いてテーブルもある。500 なら届いていない。
-          code=$(curl -s -o /dev/null -w '%{http_code}' \
-                 "$base/api/sessions/zzzzzzzzzz/current")
-          case "$code" in
-            404) echo "DB まで届いている" ;;
-            *) echo "::error::DB に届いていない（$code）。接続文字列と移行を確認すること"
-               exit 1 ;;
-          esac
+          # **中身まで見る。** 静的ファイルが `/` に mount されているので、
+          # 経路が消えたときも 404 になる（本文は `{"detail":"Not Found"}`）。
+          # ここで見たいのは「練習会を探しに DB まで行った」ことなので、
+          # アプリが返す `code` を確かめる。
+          body=$(curl -s "$base/api/sessions/zzzzzzzzzz/current")
+          if echo "$body" | jq -e '.code == "not_found"' > /dev/null 2>&1; then
+            echo "DB まで届いている"
+          else
+            echo "::error::DB に届いていない。接続文字列と移行を確認すること"
+            echo "返ってきたもの: $body"
+            exit 1
+          fi
 
           # 3. 合言葉の門が開いていないか
           code=$(curl -s -o /dev/null -w '%{http_code}' "$base/api/sessions")

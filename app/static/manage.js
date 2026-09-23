@@ -315,10 +315,6 @@ $("import-members").addEventListener("click", async () => {
       { event_id: Number(eventId) },
     );
     const parts = [`${summary.added.length}人を追加`];
-    if (summary.renamed.length) {
-      const pairs = summary.renamed.map(([before, after]) => `${before}→${after}`);
-      parts.push(`呼び名の変更 ${pairs.join("、")}`);
-    }
     if (summary.unchanged) parts.push(`${summary.unchanged}人は登録済み`);
     if (summary.resting.length) {
       parts.push(`休憩にした ${summary.resting.join("、")}`);

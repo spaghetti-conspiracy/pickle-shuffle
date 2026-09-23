@@ -19,6 +19,7 @@ from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+from app.external import EXTERNAL_ID_MAX
 from app.scheduler.domain import (
     Gender,
     Level,
@@ -106,14 +107,21 @@ class PracticeSession(Base):
     """練習会。"""
 
     __tablename__ = "practice_sessions"
-    __table_args__ = (UniqueConstraint("name", name="uq_session_name"),)
-    """名前は重複させない。
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_session_name"),)
+    """名前は団体の中で重複させない。
 
     選択画面はプルダウンに名前だけを出すので、同名があると見分けられない。
     終了した練習会は削除されるため、次の週には同じ名前を使える。
+    **団体をまたいだ重複は禁じない。** 別の団体が同じ曜日の練習会を持つのは当然で、
+    そこを止めると団体を足した瞬間に名前の取り合いになる。
     """
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("owners.id", ondelete="CASCADE"), index=True
+    )
+    """この練習会を持つ団体。統計も台帳もここから外へは出ない。"""
+
     token: Mapped[str] = mapped_column(
         String(TOKEN_LENGTH), unique=True, index=True, default=new_session_token
     )
@@ -124,11 +132,14 @@ class PracticeSession(Base):
     highlight_beginners: Mapped[bool] = mapped_column(Boolean, default=False)
     """表示画面で初心者の名前を緑にするか。アルゴリズムの確認用で、ふだんは off。"""
 
-    tennisbear_event_id: Mapped[int | None] = mapped_column(Integer, default=None)
-    """参加者を取り込んだイベント。一度取り込んだら以後はここに固定する。
+    external_event_id: Mapped[str | None] = mapped_column(
+        String(EXTERNAL_ID_MAX), default=None
+    )
+    """参加者を取り込んだイベント（``bear:1614380``）。一度取り込んだら以後は固定。
 
     別のイベントを取り込むと、居ない人が一斉に休憩へ回る。取り違えたときに
     黙って起きると事故になるので、練習会ごとに1つに縛る。
+    取り込み元を識別子に含めるので、プラットフォームが増えても列は増えない。
     """
 
     timer_minutes: Mapped[int | None] = mapped_column(Integer, default=7)
@@ -204,21 +215,15 @@ class Member(Base):
     status: Mapped[MemberStatus] = mapped_column(
         _enum_column(MemberStatus), default=MemberStatus.ACTIVE
     )
-    tennisbear_user_id: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
-    """取り込み元の tennisbear のユーザ ID。手で登録した人は None。
-
-    再取り込みのときに「もう登録済みか」を照合するために持つ。
-    ニックネームは識別子ではない（不変則14）ので、名前では照合できない。
-    画面には出さない。
-    """
-
-    tennisbear_nickname: Mapped[str | None] = mapped_column(
-        String(50), default=None
+    person_id: Mapped[int | None] = mapped_column(
+        ForeignKey("people.id", ondelete="SET NULL"), default=None, index=True
     )
-    """最後に取り込んだときの、tennisbear 側の呼び名。
+    """台帳の誰か。手で入れた昔の行や、台帳から消された人は None。
 
-    管理者が読み上げ用に付け直した名前を、取り込みのたびに戻さないために持つ。
-    上流が変わったときだけ追従する。
+    再取り込みや台帳の修正は、名前ではなくこの id で引き当てる
+    （ニックネームは識別子ではない・不変則14）。
+    **属性の写しはこの行にも持つ。** 台帳の行が消えても、参加者と過去の記録が
+    無傷で残るようにするため。
     """
 
     baseline: Mapped[int] = mapped_column(Integer, default=0)
@@ -367,30 +372,108 @@ class RoundParticipation(Base):
     round: Mapped[Round] = relationship(back_populates="participations")
 
 
-class MemberProfile(Base):
-    """属性の辞書。練習会には属さない。
+class Person(Base):
+    """メンバー台帳。練習会には属さない。
 
     保持するのは属性だけで、統計は絶対に共有しない（不変則13）。
-    引き当ては tennisbear の ID があればそちらを優先し、無ければニックネーム。
-    ニックネームは識別子ではない（不変則14）ので、重複時は last-write-wins で
-    振動してよい、という運用方針は変えない。
+    統計のスコープを決めるのは ``members.session_id`` である、という構造は変えない。
+
+    引き当ては ``external_id``（取り込み元付きの識別子）で行う。
+    ニックネームは識別子ではない（不変則14）ので、同名を禁じず postfix で見分ける。
     """
 
-    __tablename__ = "member_profiles"
+    __tablename__ = "people"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "external_id", name="uq_person_external"),
+    )
+    """取り込み元の識別子は団体の中で一意。
+
+    別の団体が同じ人を自分の台帳に持つのは当然なので、全体では縛らない。
+    """
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    nickname: Mapped[str] = mapped_column(String(50), unique=True, index=True)
-    tennisbear_user_id: Mapped[int | None] = mapped_column(
-        Integer, unique=True, index=True, default=None
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("owners.id", ondelete="CASCADE"), index=True
     )
-    """取り込み元のユーザ ID。手で登録した人は None。
-
-    こちらで引き当てられると、改名しても属性を見失わない。
-    管理者が直したレベルが次の練習会でも使われる。
-    """
+    nickname: Mapped[str] = mapped_column(String(NICKNAME_MAX))
+    """読み上げに使う名前。**一意にしない。** 同名は postfix で見分ける。"""
 
     gender: Mapped[Gender] = mapped_column(_enum_column(Gender))
     level: Mapped[Level] = mapped_column(_enum_column(Level))
+
+    external_id: Mapped[str | None] = mapped_column(
+        String(EXTERNAL_ID_MAX), default=None, index=True
+    )
+    """取り込み元の識別子（``bear:9001``）。手で登録した人は None。
+
+    **向こうと繋がっているのはこの ID だけ。** 名前・性別・レベルは初回の
+    取り込みで写したあとは、こちら側で管理する。同名で番号が付いた人は
+    たいてい別の呼び名に変えたくなるので、ここだけで通じる名前を持つ方が自然。
+    画面には出さない。出すのは取り込み元の名前だけ。
+    """
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class Owner(Base):
+    """団体。すべてのデータはここに紐づく。
+
+    いまは1行しか作らないが、管理者を複数登録して認証を付けるときに
+    **テーブルを変えずに済む**よう、最初から構造として持っておく。
+    """
+
+    __tablename__ = "owners"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(NAME_MAX))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Admin(Base):
+    """管理者アカウント。
+
+    いまは環境変数から作る固定の1人だけ。登録画面は作らない。
+    """
+
+    __tablename__ = "admins"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    login: Mapped[str] = mapped_column(String(NAME_MAX), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    """``pbkdf2_sha256$<回数>$<salt>$<hash>``。平文は持たない。"""
+
+    is_bootstrap: Mapped[bool] = mapped_column(Boolean, default=False)
+    """環境変数から作った固定の管理者か。
+
+    この行に限り、起動のたびに ``ADMIN_PASSWORD`` からハッシュを作り直す。
+    パスワードを変えるのに DB を作り直さなくてよい。
+    """
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class OwnerAdmin(Base):
+    """どの管理者がどの団体を見るか。
+
+    1つの団体を複数人で管理する、が主目的。中間表にしてあるので、
+    1人が複数の団体を見る形も**テーブルを変えずに**表せる。
+    """
+
+    __tablename__ = "owner_admins"
+
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("owners.id", ondelete="CASCADE"), primary_key=True
+    )
+    admin_id: Mapped[int] = mapped_column(
+        ForeignKey("admins.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(30), default="admin")
+    """いまは使わない。役割を分けたくなったときに列を足さずに済むよう置いておく。"""
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

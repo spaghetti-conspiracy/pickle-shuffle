@@ -11,8 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
 from app.api import router
-from app.db import create_all
+from app.db import SessionLocal, create_all
 from app.errors import AppError
+from app.services.owners import ensure_bootstrap
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -33,8 +34,10 @@ class RevalidatingStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """起動時にテーブルを作成する。"""
+    """起動時にテーブルを作り、既定の団体と管理者を用意する。"""
     create_all()
+    with SessionLocal() as db:
+        ensure_bootstrap(db)
     yield
 
 

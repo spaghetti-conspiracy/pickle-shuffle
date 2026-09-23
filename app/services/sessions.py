@@ -10,21 +10,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import ConflictError, NotFoundError, ValidationError
+from app.external import SOURCE_TENNISBEAR, external_key, raw_id_of
 from app.models import (
-    NICKNAME_MAX,
     Court,
     Match,
     MatchSlot,
     Member,
-    MemberProfile,
+    Owner,
+    Person,
     PracticeSession,
     RoundParticipation,
     default_court_name,
     new_random_seed,
-    utcnow,
 )
 from app.scheduler.domain import Gender, Level, MemberStatus
+from app.services import people as people_service
 from app.services import stats
+from app.services.naming import unique_nickname
 from app.tennisbear import Participant
 
 MAX_COURTS = 4
@@ -38,12 +40,17 @@ MAX_COURTS = 4
 # ---------------------------------------------------------------------------
 
 
-def _reject_duplicate_name(db: Session, name: str, *, exclude_id: int | None = None) -> None:
+def _reject_duplicate_name(
+    db: Session, owner: Owner, name: str, *, exclude_id: int | None = None
+) -> None:
     """同じ名前の練習会があれば断る。
 
     選択画面はプルダウンに名前だけを出すので、同名だと見分けられない。
+    見分けがつかないのは同じ団体の中だけなので、判定も団体の中で行う。
     """
-    query = select(PracticeSession).where(PracticeSession.name == name)
+    query = select(PracticeSession).where(
+        PracticeSession.owner_id == owner.id, PracticeSession.name == name
+    )
     if exclude_id is not None:
         query = query.where(PracticeSession.id != exclude_id)
     if db.scalars(query).first() is not None:
@@ -53,16 +60,20 @@ def _reject_duplicate_name(db: Session, name: str, *, exclude_id: int | None = N
         )
 
 
-def create_session(db: Session, name: str, court_count: int = 2) -> PracticeSession:
+def create_session(
+    db: Session, owner: Owner, name: str, court_count: int = 2
+) -> PracticeSession:
     """練習会を作る。コートは最大数ぶんまとめて作る。"""
     if not name.strip():
         raise ValidationError("練習会の名前を入力してください")
     if not 1 <= court_count <= MAX_COURTS:
         raise ValidationError(f"コート数は1〜{MAX_COURTS}の範囲で指定してください")
     name = name.strip()
-    _reject_duplicate_name(db, name)
+    _reject_duplicate_name(db, owner, name)
 
-    session = PracticeSession(name=name, random_seed=new_random_seed())
+    session = PracticeSession(
+        owner_id=owner.id, name=name, random_seed=new_random_seed()
+    )
     db.add(session)
     db.flush()
     for index in range(court_count):
@@ -89,6 +100,8 @@ def get_session(db: Session, token: str) -> PracticeSession:
     """URL のトークンから練習会を引く。
 
     連番の id は外に出さないので、外から来る識別子は必ずトークン。
+    トークンは全体で一意な capability なので、ここでは団体で絞らない
+    （QR を読んだメンバーは合言葉を持っていない）。
     """
     session = db.scalars(
         select(PracticeSession).where(PracticeSession.token == token)
@@ -106,8 +119,26 @@ def get_session_by_id(db: Session, session_id: int) -> PracticeSession:
     return session
 
 
-def list_sessions(db: Session) -> list[PracticeSession]:
-    return list(db.scalars(select(PracticeSession).order_by(PracticeSession.id.desc())))
+def owner_of(db: Session, session: PracticeSession) -> Owner:
+    """その練習会を持つ団体。
+
+    トークンで開く画面は合言葉を持っていないので、団体は練習会から辿る。
+    """
+    owner = db.get(Owner, session.owner_id)
+    if owner is None:
+        raise NotFoundError("団体が見つかりません")
+    return owner
+
+
+def list_sessions(db: Session, owner: Owner) -> list[PracticeSession]:
+    """選択画面に出す一覧。ほかの団体の練習会は出さない。"""
+    return list(
+        db.scalars(
+            select(PracticeSession)
+            .where(PracticeSession.owner_id == owner.id)
+            .order_by(PracticeSession.id.desc())
+        )
+    )
 
 
 def update_session(
@@ -122,7 +153,7 @@ def update_session(
     if name is not None:
         if not name.strip():
             raise ValidationError("練習会の名前を入力してください")
-        _reject_duplicate_name(db, name.strip(), exclude_id=session.id)
+        _reject_duplicate_name(db, owner_of(db, session), name.strip(), exclude_id=session.id)
         session.name = name.strip()
     if highlight_beginners is not None:
         session.highlight_beginners = highlight_beginners
@@ -136,7 +167,7 @@ def update_session(
 
 
 def delete_session(db: Session, session: PracticeSession) -> None:
-    """記録ごと破棄する。ニックネームの辞書は練習会に属さないので残る。"""
+    """記録ごと破棄する。メンバー台帳は練習会に属さないので残る。"""
     db.delete(session)
     db.commit()
 
@@ -178,105 +209,21 @@ def update_court(
 # ---------------------------------------------------------------------------
 
 
-def find_profile(
-    db: Session, *, nickname: str, tennisbear_user_id: int | None = None
-) -> MemberProfile | None:
-    """属性の辞書を引く。tennisbear の ID があればそちらを優先する。
-
-    ニックネームは識別子ではない（不変則14）ので、改名されると
-    名前では見失う。ID で引ければ、管理者が直したレベルが次の練習会にも残る。
-
-    ID を持っている相手にニックネームで当てにいかない。同名の別人の属性を
-    そのまま被ってしまう（「マッツ」を初心者に直したら、別の「マッツ」も
-    初心者で入る）。名前で引くのは、ID の無い行に限る。
-    """
-    if tennisbear_user_id is not None:
-        found = db.scalars(
-            select(MemberProfile).where(
-                MemberProfile.tennisbear_user_id == tennisbear_user_id
-            )
-        ).first()
-        if found is not None:
-            return found
-    by_name = db.scalars(
-        select(MemberProfile).where(MemberProfile.nickname == nickname)
-    ).first()
-    if by_name is None:
-        return None
-    if tennisbear_user_id is not None and by_name.tennisbear_user_id is not None:
-        # 名前は同じだが、別の人の行だと分かっている。
-        return None
-    return by_name
-
-
-def _upsert_profile(
-    db: Session,
-    nickname: str,
-    gender: Gender,
-    level: Level,
-    tennisbear_user_id: int | None = None,
-) -> None:
-    """属性の辞書を更新する。
-
-    属性だけを覚えておいて次の練習会で使い回す。統計は共有しない（不変則13）。
-    同名が複数いても後勝ちでよい、という運用方針。
-    """
-    profile = find_profile(db, nickname=nickname, tennisbear_user_id=tennisbear_user_id)
-    if profile is None:
-        if db.scalars(
-            select(MemberProfile).where(MemberProfile.nickname == nickname)
-        ).first() is not None:
-            # 同じ名前の別人の行がある。ニックネームは一意なので、ここで
-            # 新しい行は作れない。属性の引き継ぎを諦めるだけで害はない。
-            return
-        db.add(
-            MemberProfile(
-                nickname=nickname,
-                gender=gender,
-                level=level,
-                tennisbear_user_id=tennisbear_user_id,
-            )
-        )
-        return
-    # **名前は書き換えない。** ニックネームは一意なので、別の行とぶつかると
-    # 取り込みが丸ごと失敗する。ここで覚えたいのは属性であって名前ではない。
-    profile.gender = gender
-    profile.level = level
-    if tennisbear_user_id is not None:
-        profile.tennisbear_user_id = tennisbear_user_id
-    profile.updated_at = utcnow()
-
-
-def list_profiles(db: Session) -> list[MemberProfile]:
-    return list(db.scalars(select(MemberProfile).order_by(MemberProfile.nickname)))
-
-
-def delete_profile(db: Session, nickname: str) -> None:
-    profile = db.scalars(
-        select(MemberProfile).where(MemberProfile.nickname == nickname)
-    ).first()
-    if profile is None:
-        raise NotFoundError("登録がありません")
-    db.delete(profile)
-    db.commit()
-
-
 def add_member(
     db: Session,
     session: PracticeSession,
+    person: Person,
     *,
-    nickname: str,
-    gender: Gender,
-    level: Level,
-    tennisbear_user_id: int | None = None,
-    tennisbear_nickname: str | None = None,
     commit: bool = True,
 ) -> Member:
-    """メンバーを登録する。途中参加でも公平になるよう下駄を履かせる。"""
-    if not nickname.strip():
-        raise ValidationError("ニックネームを入力してください")
-    nickname = nickname.strip()
+    """台帳の人を、この練習会の参加者に加える。
 
+    属性は台帳から**写す**。参照ではなく写しにするのは、台帳から人が消えても
+    参加者と過去の記録が無傷で残るようにするため。台帳を直したときは
+    `people.update_person` が書き写す（不変則12: 反映は次の生成から）。
+
+    途中参加でも公平になるよう下駄を履かせる。
+    """
     # 下駄は参加時点の active メンバーの最小 adjusted。これが無いと
     # 遅刻者が追いつくまで何ラウンドも連続出場してしまう。
     actives = [
@@ -286,17 +233,20 @@ def add_member(
     ]
     baseline = min((p.adjusted for p in actives), default=0)
 
+    taken = {
+        member.nickname
+        for member in list_members(db, session.id)
+        if member.status is not MemberStatus.LEFT
+    }
     member = Member(
         session_id=session.id,
-        nickname=nickname,
-        gender=gender,
-        level=level,
+        person_id=person.id,
+        nickname=unique_nickname(person.nickname, taken),
+        gender=person.gender,
+        level=person.level,
         baseline=baseline,
-        tennisbear_user_id=tennisbear_user_id,
-        tennisbear_nickname=tennisbear_nickname,
     )
     db.add(member)
-    _upsert_profile(db, nickname, gender, level, tennisbear_user_id)
     if not commit:
         # まとめて取り込むときは、最後に一度だけコミットする。
         # 1人ずつ確定すると、途中で失敗したときに中途半端に残る。
@@ -338,7 +288,10 @@ def update_member(
     if status is not None:
         member.status = status
 
-    _upsert_profile(db, member.nickname, member.gender, member.level)
+    # 属性は台帳にも上げる。直す場所がどちらでも同じ結果になるように。
+    # **名前は上げない。** 練習会の中での番号付けや読み上げ用の言い換えで、
+    # 台帳の名前を書き換えてしまわないため。
+    people_service.sync_from_member(db, member)
     db.commit()
     db.refresh(member)
     return member
@@ -401,78 +354,60 @@ class ImportResult:
     """取り込みの結果。画面にそのまま出せる粒度で返す。"""
 
     added: list[str]
-    renamed: list[tuple[str, str]]
     unchanged: int
     resting: list[str]
     """一覧から居なくなったので休憩にした人。削除はしない（統計が壊れる）。"""
 
     @property
     def total(self) -> int:
-        return len(self.added) + len(self.renamed) + self.unchanged
+        return len(self.added) + self.unchanged
 
 
-def unique_nickname(base: str, taken: set[str]) -> str:
-    """重複しないニックネームにする。先にいる人はそのまま、後の人に番号を振る。
-
-    tennisbear の ID で区別はできるが、画面に出すには細かすぎる。
-    「マッツ」「マッツ2」なら読み上げにも使える。番号はその練習会の中でだけ
-    意味を持つ（不変則14: ニックネームは識別子ではない）。
-    """
-    base = base[:NICKNAME_MAX]
-    if base not in taken:
-        return base
-    number = 2
-    while True:
-        suffix = str(number)
-        candidate = base[: NICKNAME_MAX - len(suffix)] + suffix
-        if candidate not in taken:
-            return candidate
-        number += 1
-
-
-def check_event(session: PracticeSession, event_id: int) -> None:
+def check_event(session: PracticeSession, event_key: str) -> None:
     """取り込み元が食い違っていないかだけを見る。書き換えはしない。
 
     イベントページを取りに行く前に呼ぶ。打ち間違えたIDで外へ出ていくと、
     「見つかりませんでした」が先に返ってしまい、本当の理由（別のイベントは
     取り込めない）が伝わらない。
     """
-    bound = session.tennisbear_event_id
-    if bound is not None and bound != event_id:
+    bound = session.external_event_id
+    if bound is not None and bound != event_key:
         raise ValidationError(
-            f"この練習会はイベント {bound} から取り込んでいます。別のイベントは取り込めません。"
+            f"この練習会はイベント {raw_id_of(bound)} から取り込んでいます。"
+            "別のイベントは取り込めません。"
         )
 
 
-def _bind_event(db: Session, session: PracticeSession, event_id: int) -> None:
+def _bind_event(db: Session, session: PracticeSession, event_key: str) -> None:
     """この練習会の取り込み元を、最初のイベントに確定する。
 
     読んでから書くと、2つの端末が同時に初めての取り込みを押したときに
     両方が通ってしまう。まだ紐づいていない行だけを WHERE で狙い、
     更新できた行数で「自分が確定させたか」を判定する。
     """
-    if session.tennisbear_event_id is None:
+    if session.external_event_id is None:
         claimed = (
             db.execute(
                 update(PracticeSession)
                 .where(
                     PracticeSession.id == session.id,
-                    PracticeSession.tennisbear_event_id.is_(None),
+                    PracticeSession.external_event_id.is_(None),
                 )
-                .values(tennisbear_event_id=event_id)
+                .values(external_event_id=event_key)
             ).rowcount
             == 1
         )
         if claimed:
-            session.tennisbear_event_id = event_id
+            session.external_event_id = event_key
             return
         # 別の端末が先に確定させた。今の値で判定し直す。
         db.refresh(session)
-    check_event(session, event_id)
+    check_event(session, event_key)
 
 
 def import_participants(
     db: Session,
+    owner: Owner,
     session: PracticeSession,
     participants: list[Participant],
     *,
@@ -480,93 +415,77 @@ def import_participants(
 ) -> ImportResult:
     """イベントの参加者を練習会に取り込む。
 
-    すでに取り込んだ人は tennisbear の ID で見分ける。そのときの扱いは:
+    照合の軸は**メンバー台帳**。参加者はまず台帳の人に落としてから、
+    その人が練習会に居るかを見る。扱いは:
 
-    - **属性はこちらの DB を優先する。** 管理者が直したレベルや性別を、
-      取り込みのたびに戻してしまわないため
-    - **ニックネームだけは追従する。** 呼び名が変わったのに古い名前で
-      読み上げると混乱する。変えるときも重複を避けて番号を振り直す
+    - **向こうと繋がっているのはユーザ ID だけ。** 名前・性別・レベルを
+      写すのは、その人を初めて台帳に載せるときだけ。以後は一切同期しない。
+      同名で番号が付いた人はたいてい別の呼び名に変えたくなるので、
+      こちらで通じる名前を持つ方が自然であり、上流の都合で書き換わらない
     - **いなくなった人は消さない。** 統計が壊れるので、手で「休憩」にしてもらう
 
-    新しく入れる人の属性は、過去の練習会で覚えた値（`member_profiles`）が
-    あればそちらを使う。無ければ tennisbear から推定した値を使う。
+    台帳に居ない人は、取り込んだ値を下書きとして新しく登録する。
+    推定したレベルは外れる前提で、管理者が直す。
 
     **練習会に紐づくイベントは1つに縛る。** 別のイベントを取り込むと、
     その一覧に居ない人が一斉に休憩へ回る。イベントIDを打ち間違えたときに
     黙って起きると事故になる。
     """
     if event_id is not None:
-        _bind_event(db, session, event_id)
-    existing = list(
-        db.scalars(select(Member).where(Member.session_id == session.id))
-    )
-    by_tennisbear = {
-        member.tennisbear_user_id: member
+        _bind_event(db, session, external_key(SOURCE_TENNISBEAR, event_id))
+    existing = list_members(db, session.id)
+    by_person = {
+        member.person_id: member
         for member in existing
-        if member.tennisbear_user_id is not None
+        if member.person_id is not None
     }
-    taken = {member.nickname for member in existing}
 
     added: list[str] = []
-    renamed: list[tuple[str, str]] = []
     unchanged = 0
     seen: set[int] = set()
 
     for participant in participants:
-        if participant.user_id in seen:
+        key = external_key(SOURCE_TENNISBEAR, participant.user_id)
+        person = people_service.find_by_external(db, owner, key)
+        if person is None:
+            # 初めて見る人だけ、向こうの値を下書きとして写す。
+            person = people_service.add_person(
+                db,
+                owner,
+                nickname=participant.nickname,
+                gender=participant.gender,
+                level=participant.level,
+                external_id=key,
+                commit=False,
+            )
+
+        if person.id in seen:
             # 同じ人が2回出てくることがある（キャンセルして再申込など）。
             # 見落とすと幽霊メンバーができ、毎ラウンド出場枠を1つ食う。
             unchanged += 1
             continue
-        seen.add(participant.user_id)
-        member = by_tennisbear.get(participant.user_id)
-        if member is None:
-            profile = find_profile(
-                db,
-                nickname=participant.nickname,
-                tennisbear_user_id=participant.user_id,
-            )
-            nickname = unique_nickname(participant.nickname, taken)
-            member_row = add_member(
-                db,
-                session,
-                nickname=nickname,
-                gender=profile.gender if profile else participant.gender,
-                level=profile.level if profile else participant.level,
-                tennisbear_user_id=participant.user_id,
-                tennisbear_nickname=participant.nickname,
-                commit=False,
-            )
-            taken.add(nickname)
-            added.append(nickname)
-            by_tennisbear[participant.user_id] = member_row
-            continue
+        seen.add(person.id)
 
-        if member.tennisbear_nickname == participant.nickname:
-            # 上流は変わっていない。手元で付け直した呼び名を尊重する。
-            unchanged += 1
-            continue
-        member.tennisbear_nickname = participant.nickname
-        wanted = unique_nickname(participant.nickname, taken - {member.nickname})
-        if wanted != member.nickname:
-            before = member.nickname
-            taken.discard(before)
-            member.nickname = wanted
-            taken.add(wanted)
-            renamed.append((before, wanted))
+        member = by_person.get(person.id)
+        if member is None:
+            member = add_member(db, session, person, commit=False)
+            by_person[person.id] = member
+            added.append(member.nickname)
         else:
             unchanged += 1
 
     # 一覧から消えた人は休憩にする。削除すると統計が壊れる（仕様）。
+    # 手で登録した人（取り込み元を持たない人）は対象にしない。
     rested: list[str] = []
     for member in existing:
-        if member.tennisbear_user_id is None or member.tennisbear_user_id in seen:
+        if member.person_id is None or member.person_id in seen:
+            continue
+        person = db.get(Person, member.person_id)
+        if person is None or person.external_id is None:
             continue
         if member.status is MemberStatus.ACTIVE:
             member.status = MemberStatus.RESTING
             rested.append(member.nickname)
 
     db.commit()
-    return ImportResult(
-        added=added, renamed=renamed, unchanged=unchanged, resting=rested
-    )
+    return ImportResult(added=added, unchanged=unchanged, resting=rested)

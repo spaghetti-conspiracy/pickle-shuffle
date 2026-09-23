@@ -56,8 +56,15 @@ class SessionOut(BaseModel):
     highlight_beginners: bool
     """表示画面で初心者の名前を緑にするか。アルゴリズムの確認用。"""
 
-    tennisbear_event_id: int | None
-    """取り込み元のイベント。一度取り込んだら以後はここに固定する。"""
+    tennisbear_event_id: str | None
+    """取り込み元のイベント ID。一度取り込んだら以後はここに固定する。
+
+    保存は ``bear:1614380`` の形だが、画面に出すのは数字の部分だけ。
+    取り込み元は ``import_source`` で別に返す。
+    """
+
+    import_source: str | None = None
+    """取り込み元の名前（``bear``）。手で作った練習会は None。"""
 
     timer_minutes: int | None
     """1試合の持ち時間（分）。None なら無制限。"""
@@ -75,7 +82,6 @@ class ImportResultOut(BaseModel):
     added: list[str]
     """新しく登録したニックネーム。"""
 
-    renamed: list[tuple[str, str]]
     """呼び名が変わった人。(前, 後)。"""
 
     unchanged: int
@@ -86,7 +92,15 @@ class ImportResultOut(BaseModel):
 
 
 class MemberCreate(BaseModel):
-    nickname: str = Field(max_length=NICKNAME_MAX)
+    """参加者を足す。台帳から選ぶか、その場で登録するかの2通り。
+
+    ``person_id`` があればそれを使う。無ければ名前で新しく登録する
+    （台帳にも入る）。打ち込んだ名前が台帳の誰かと同じでも、選んだのでは
+    ないので別人として扱い、番号を振る。
+    """
+
+    person_id: int | None = None
+    nickname: str = Field(default="", max_length=NICKNAME_MAX)
     gender: Gender = Gender.OTHER
     level: Level = Level.PICKLEBALL
 
@@ -109,12 +123,42 @@ class MemberOut(BaseModel):
     plays: int = 0
 
 
-class MemberProfileOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class PersonOut(BaseModel):
+    """メンバー台帳の1人。"""
 
+    id: int
     nickname: str
     gender: Gender
     level: Level
+    source: str | None = None
+    """どこから取り込んだ人か（``bear``）。手で登録した人は None。
+
+    向こうの ID そのものは返さない。二重登録を見分けるための印。
+    """
+
+    duplicate: bool = False
+    """同じ名前が台帳に複数あるか。手登録と取り込みの二重を見つけるために出す。"""
+
+    sessions: int = 0
+    """いま参加者として入っている練習会の数。消す前の目安に使う。"""
+
+
+class PersonCreate(BaseModel):
+    nickname: str = Field(max_length=NICKNAME_MAX)
+    gender: Gender = Gender.OTHER
+    level: Level = Level.PICKLEBALL
+
+
+class PersonUpdate(BaseModel):
+    nickname: str | None = Field(default=None, max_length=NICKNAME_MAX)
+    gender: Gender | None = None
+    level: Level | None = None
+
+
+class LoginRequest(BaseModel):
+    """管理者の合言葉。いたずら防止であって、秘密を守る仕組みではない。"""
+
+    password: str = Field(max_length=200)
 
 
 class PlayerOut(BaseModel):

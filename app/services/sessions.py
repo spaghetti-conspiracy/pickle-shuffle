@@ -116,6 +116,8 @@ def update_session(
     *,
     name: str | None = None,
     highlight_beginners: bool | None = None,
+    timer_minutes: int | None = None,
+    unlimited: bool = False,
 ) -> PracticeSession:
     if name is not None:
         if not name.strip():
@@ -124,6 +126,10 @@ def update_session(
         session.name = name.strip()
     if highlight_beginners is not None:
         session.highlight_beginners = highlight_beginners
+    if unlimited:
+        session.timer_minutes = None
+    elif timer_minutes is not None:
+        session.timer_minutes = timer_minutes
     db.commit()
     db.refresh(session)
     return session

@@ -261,6 +261,59 @@ tr.left {
   margin: 0;
 }
 
+/* 時計のボックス。見出しは普通の大きさで左上に置き、数字だけを大きく出す。 */
+.clock-box {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.9rem 0.9rem;
+}
+
+.clock-title {
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.court-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+/* 残り時間。対戦表の下に置き、離れた場所からも読めるよう大きく出す。
+   ヘッダーに小さく出すと、読み上げている最中に目に入らない。 */
+.clock {
+  text-align: center;
+  font-size: clamp(4rem, 20vw, 12rem);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  min-height: 1em;
+}
+
+/* 時間切れと超過は、数字だけだと見落とすので添える。 */
+.clock .clock-note {
+  display: block;
+  font-size: 0.16em;
+  font-weight: 400;
+  margin-top: 0.4em;
+  color: var(--muted);
+}
+
+.clock[data-state="over"] {
+  color: var(--danger);
+  /* 「試合終了」は4文字あるので、数字ほど大きくすると入りきらない。 */
+  font-size: clamp(2.5rem, 11vw, 7rem);
+}
+
+.clock[data-state="paused"] {
+  color: var(--muted);
+}
+
 .overview-head .warnings {
   color: var(--warn);
   font-size: 0.9rem;
@@ -361,6 +414,14 @@ tr.left {
 
 .player[data-tone="beginner"] {
   color: #9ee6a8;
+}
+
+/* 生成のあとに休憩へ回った人・外れた人。組み合わせは動かさない（不変則12）ので、
+   暗くして「この人はもう出られない」と分かるようにする。 */
+.player[data-unavailable] {
+  opacity: 0.35;
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
 }
 
 /* 女性の暖色と初心者の緑は、色相を取り除くとほぼ同じ明るさになる。
@@ -579,6 +640,20 @@ tr.left {
   color: var(--muted);
   font-size: 1.1rem;
   padding: 2rem 0;
+}
+
+/* この端末だけの設定。ほかの人の端末には影響しない。 */
+.member-sound {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.clock-box #alarm-off {
+  display: block;
+  width: 100%;
+  margin-top: 0.6rem;
 }
 
 .member-foot {

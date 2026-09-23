@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timezone
+from enum import Enum
 
 from sqlalchemy import (
     BigInteger,
@@ -56,6 +57,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(value: datetime) -> datetime:
+    """naive な日時を UTC とみなして揃える。
+
+    保存はどちらも UTC だが、SQLite は tz を落として返すため、
+    そのまま比べると PostgreSQL 側の aware な値と比較できない。
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def new_random_seed() -> int:
     """練習会の乱数シードを採番する。以後この値は変えない（不変則11）。"""
     return secrets.randbits(63)
@@ -80,6 +90,16 @@ def new_session_token() -> str:
 def default_court_name(court_index: int) -> str:
     """コート名の初期値。"""
     return f"コート{court_index + 1}"
+
+
+class TimerState(str, Enum):
+    """試合時計の状態。"""
+
+    STOPPED = "stopped"
+    """動いていない。開始前か、中断したあと。"""
+
+    RUNNING = "running"
+    PAUSED = "paused"
 
 
 class PracticeSession(Base):
@@ -109,6 +129,13 @@ class PracticeSession(Base):
 
     別のイベントを取り込むと、居ない人が一斉に休憩へ回る。取り違えたときに
     黙って起きると事故になるので、練習会ごとに1つに縛る。
+    """
+
+    timer_minutes: Mapped[int | None] = mapped_column(Integer, default=7)
+    """1試合の持ち時間（分）。None なら無制限。既定は7分。
+
+    残り時間はこの値と経過時間から毎回計算する。締切の時刻を持たないので、
+    試合の途中で設定を変えてもその場で反映される。
     """
 
     random_seed: Mapped[int] = mapped_column(BigInteger, default=new_random_seed)
@@ -237,6 +264,28 @@ class Round(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    timer_state: Mapped[TimerState] = mapped_column(
+        _enum_column(TimerState), default=TimerState.STOPPED
+    )
+    timer_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    """動き出した時刻。止まっているときは None。"""
+
+    timer_alarm_silenced: Mapped[bool] = mapped_column(Boolean, default=False)
+    """時間切れの音を止めたか。
+
+    端末ごとに持つと、リーダーが止めてもメンバーのスマートフォンで鳴り続ける。
+    どの端末で止めても全員で止まるよう、ラウンドの状態として持つ。
+    """
+
+    timer_elapsed_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    """止めるまでに積み上がった経過秒。動いている間はここに started_at からの差を足す。
+
+    締切ではなく経過を持つ理由は、持ち時間の設定を試合中に変えても
+    その場で正しい残り時間になるため。
+    """
 
     session: Mapped[PracticeSession] = relationship(back_populates="rounds")
     matches: Mapped[list[Match]] = relationship(

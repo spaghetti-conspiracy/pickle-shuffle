@@ -186,6 +186,42 @@ def test_a_member_who_starts_resting_mid_round_is_flagged(client):
     assert after["stale_members"] == [nickname]
 
 
+def test_a_member_who_leaves_mid_round_is_dimmed(client):
+    """出場中に休憩へ回った人・外れた人は、表示で分かるようにする。
+
+    組み合わせは動かさない（不変則12）ので、カードにはその人が残る。
+    読み上げる前に「もう出られない」と気づけないと、呼んでから気づく。
+    """
+    session = create_session(client)
+    add_members(client, session["token"], 13)
+    before = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
+    playing = next(
+        p["id"]
+        for court in before["courts"]
+        if court["match"]
+        for p in court["match"]["team_a"]
+    )
+    assert all(
+        not p["unavailable"]
+        for court in before["courts"]
+        if court["match"]
+        for p in court["match"]["team_a"] + court["match"]["team_b"]
+    ), "最初は全員が出られる"
+
+    client.patch(f"/api/members/{playing}", json={"status": "resting"})
+
+    after = client.get(f"/api/sessions/{session['token']}/current").json()
+    dimmed = [
+        p["id"]
+        for court in after["courts"]
+        if court["match"]
+        for p in court["match"]["team_a"] + court["match"]["team_b"]
+        if p["unavailable"]
+    ]
+    assert dimmed == [playing]
+    assert lineup(after) == lineup(before), "組み合わせは動かさない"
+
+
 def test_a_level_change_mid_round_is_flagged(client):
     """出場中の人のレベルを変えたら、表示画面に注意を出す。
 
@@ -392,6 +428,7 @@ def test_the_internal_id_is_not_exposed(client):
         "courts",
         "highlight_beginners",
         "tennisbear_event_id",
+        "timer_minutes",
     }
 
 

@@ -15,14 +15,25 @@
     <h1 id="session-name"></h1>
     <span id="status" class="status"></span>
     <span id="offline" class="error hidden"></span>
+
   </div>
 
   <div id="tabs" class="tabs" role="tablist"></div>
 
   <div id="court" class="member-court"></div>
 
+  <section id="clock-box" class="clock-box hidden">
+    <h2 id="clock-title" class="clock-title">残り時間</h2>
+    <div id="clock" class="clock"></div>
+    <button id="alarm-off" class="danger hidden">アラームを止める</button>
+  </section>
+
   <div class="member-foot">
     <span id="waiting"></span>
+    <label class="member-sound">
+      <input type="checkbox" id="sound-on" checked>
+      時間切れに音を鳴らす
+    </label>
   </div>
 </div>
 <script type="module" src="/member.js"></script>

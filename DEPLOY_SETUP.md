@@ -39,7 +39,7 @@ CLI 本体は入れても入れなくてもよい。
 
 ```bash
 npm install -g vercel     # 入れる場合
-npx vercel@48.2.11 --version   # 入れない場合。ワークフローと同じ版
+npx vercel@59.25.4 --version   # 入れない場合。ワークフローと同じ版
 ```
 
 Node を入れたくなければ、環境変数はすべて Vercel の画面から入れてもよい

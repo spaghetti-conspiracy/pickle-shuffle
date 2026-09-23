@@ -549,7 +549,7 @@ tr.left {
 }
 
 .member-team .player {
-  font-size: clamp(1.6rem, 9vw, 3rem);
+  font-size: max(1rem, min(9vw, calc(85vw / var(--len, 4))));
 }
 
 .member-versus {

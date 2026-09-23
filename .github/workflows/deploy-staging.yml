@@ -61,7 +61,11 @@ jobs:
           # **出力の形は環境で変わる。** CI では URL が1行、手元では JSON が返る
           # （`CI=true` で切り替わる）。どちらでも取れるようにする。
           url=$(jq -er '.deployment.url' < deploy.out 2>/dev/null || true)
-          [ -n "$url" ] || url=$(grep -oE 'https://[A-Za-z0-9.-]+\.vercel\.app' deploy.out | tail -1)
+          # `|| true` が要る。`set -e` 下では、grep が見つけられないと
+          # **この行で落ちて**、下の `::error::` も `cat` も出ない。
+          [ -n "$url" ] || url=$(grep -oE '[A-Za-z0-9.-]+\.vercel\.app' deploy.out | tail -1 || true)
+          # JSON はスキーム付き、平文はホスト名だけのことがある。形を揃える。
+          [ -n "$url" ] && url="https://${url#https://}" || true
           case "$url" in
             https://*) ;;
             *) echo "::error::デプロイ先の URL を取れなかった"; cat deploy.out; exit 1 ;;
@@ -108,7 +112,9 @@ jobs:
     env:
       STAGING_URL: ${{ vars.STAGING_DOMAIN }}
       STAGING_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
-      NAME: ci-smoke-${{ github.run_id }}
+      # 再実行でも名前が重ならないようにする。練習会名は重複できないので、
+      # 同じ名前だと2回目が 422 で必ず落ちる。
+      NAME: ci-smoke-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: 設定が揃っているか
         id: ready

@@ -126,7 +126,8 @@ Project Settings → General と Team Settings から読める。
    ```
 
    Vercel の Ignored Build Step は「終了コード 0 = ビルドをスキップ」。
-   Actions からの `vercel deploy --prebuilt` はここを通らないので影響しない
+   **これが効くのは Git の push で始まったデプロイだけ**で、Actions から
+   `vercel deploy` で始めたものには掛からない
 
 ## 4. Actions から出すための値を取る
 
@@ -183,7 +184,8 @@ gh secret set STAGING_ADMIN_PASSWORD --body '<staging の合言葉>'
 これは出したあとの staging にログインして「DB に書けること（＝移行が
 流れていること）」を確かめるために要る。
 
-本番に対しては `/api/health` しか叩かない（`release.yml` を見れば分かる）。
+本番に対しては**合言葉の要らない経路しか叩かない**（health、存在しない練習会を
+引いて DB 到達を見る、門が閉じているか、メンバー用画面が配られているか）。
 したがって本番の合言葉は **Vercel の環境変数にしか存在しない**。
 
 | 合言葉 | Vercel | GitHub | DB |
@@ -218,8 +220,13 @@ gh variable set STAGING_DOMAIN --body 'pickle-shuffle-staging.vercel.app'
 `gh api` を使う。
 
 ```bash
+# 新しく作るとき
 gh api -X POST repos/<owner>/<repo>/actions/variables \
   -f name=STAGING_DOMAIN -f value=pickle-shuffle-staging.vercel.app
+
+# すでにあるものを変えるとき（POST だと 409 になる）
+gh api -X PATCH repos/<owner>/<repo>/actions/variables/STAGING_DOMAIN \
+  -f name=STAGING_DOMAIN -f value=<新しい値>
 ```
 
 `*.vercel.app` の空いている名前なら何でもよい。設定すると、以後のデプロイで
@@ -236,6 +243,7 @@ gh api -X PUT repos/<owner>/<repo>/branches/main/protection \
   -f 'required_status_checks[contexts][]=テスト (Python 3.10)' \
   -f 'required_status_checks[contexts][]=テスト (Python 3.12)' \
   -f 'required_status_checks[contexts][]=Vercel と同じ形で起動する' \
+  -f 'required_status_checks[contexts][]=本番と同じ DB で通す' \
   -f 'required_status_checks[contexts][]=コンテナが組み上がる' \
   -F 'enforce_admins=true' \
   -F 'required_pull_request_reviews=null' \

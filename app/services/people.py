@@ -167,6 +167,32 @@ def session_counts(db: Session, owner: Owner) -> dict[int, int]:
     return {person_id: count for person_id, count in rows if person_id is not None}
 
 
+def numbered_pairs(people: list[Person]) -> set[int]:
+    """番号で見分けている人たちの id。
+
+    台帳は同名に番号を振るので、まったく同じ名前は並ばない。並ぶのは
+    「渡辺ともみ」と「渡辺ともみ2」のような組で、**手で登録したあとに
+    同じ人を取り込んでしまった**ときがまさにこの形になる。統合はしない
+    方針なので、どちらを消すかを選べるように一覧で知らせる。
+
+    「m1」と「m2」のように、たまたま数字で終わる別々の名前は組にしない。
+    片方がもう片方＋数字になっている場合だけを見る。
+    """
+    flagged: set[int] = set()
+    for person in people:
+        for other in people:
+            if other.id == person.id:
+                continue
+            longer, shorter = person.nickname, other.nickname
+            if len(shorter) > len(longer):
+                longer, shorter = shorter, longer
+            tail = longer[len(shorter) :]
+            if longer.startswith(shorter) and tail.isdigit():
+                flagged.add(person.id)
+                break
+    return flagged
+
+
 def source_label(person: Person) -> str | None:
     """どこから取り込んだ人か。手で登録した人は None。
 

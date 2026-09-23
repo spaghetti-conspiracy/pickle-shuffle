@@ -121,6 +121,8 @@ class MemberOut(BaseModel):
     level: Level
     status: MemberStatus
     plays: int = 0
+    person_id: int | None = None
+    """名簿の誰か。管理画面が「まだ参加していない人」を選ぶのに使う。"""
 
 
 class PersonOut(BaseModel):
@@ -137,7 +139,11 @@ class PersonOut(BaseModel):
     """
 
     duplicate: bool = False
-    """同じ名前が台帳に複数あるか。手登録と取り込みの二重を見つけるために出す。"""
+    """番号で見分けている同名がいるか（「マッツ」と「マッツ2」）。
+
+    手で登録したあとに同じ人を取り込んでしまったときがこの形になる。
+    統合はしないので、どちらを消すかを選ぶための手掛かりとして出す。
+    """
 
     sessions: int = 0
     """いま参加者として入っている練習会の数。消す前の目安に使う。"""

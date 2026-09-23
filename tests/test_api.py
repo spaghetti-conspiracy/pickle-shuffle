@@ -657,3 +657,127 @@ def test_renaming_onto_an_existing_name_is_refused(client):
     )
     assert response.status_code == 422
     assert client.get(f"/api/sessions/{afternoon['token']}").json()["name"] == "午後"
+
+
+# ---------------------------------------------------------------------------
+# メンバー台帳
+# ---------------------------------------------------------------------------
+
+
+def test_the_register_is_managed_apart_from_sessions(client):
+    """台帳の追加・修正・削除は練習会と関係なくできる。"""
+    created = client.post(
+        "/api/people", json={"nickname": "たろう", "gender": "male", "level": "beginner"}
+    )
+    assert created.status_code == 201
+    person = created.json()
+    assert person["source"] is None, "手で登録した人に取り込み元は無い"
+
+    client.patch(f"/api/people/{person['id']}", json={"level": "pickleball"})
+    assert client.get("/api/people").json()[0]["level"] == "pickleball"
+
+    assert client.delete(f"/api/people/{person['id']}").status_code == 204
+    assert client.get("/api/people").json() == []
+
+
+def test_a_participant_is_chosen_from_the_register(client):
+    """参加者は台帳から選んで足す。属性は台帳から写る。"""
+    person = client.post(
+        "/api/people", json={"nickname": "はなこ", "gender": "female", "level": "beginner"}
+    ).json()
+    session = create_session(client)
+
+    added = client.post(
+        f"/api/sessions/{session['token']}/members", json={"person_id": person["id"]}
+    )
+    assert added.status_code == 201
+    assert added.json()["nickname"] == "はなこ"
+    assert added.json()["level"] == "beginner"
+
+
+def test_someone_added_on_the_spot_joins_the_register(client):
+    """その場で登録した人は台帳にも入る。当日の飛び入り用。"""
+    session = create_session(client)
+    client.post(
+        f"/api/sessions/{session['token']}/members",
+        json={"nickname": "とびいり", "gender": "male", "level": "pickleball"},
+    )
+    assert [p["nickname"] for p in client.get("/api/people").json()] == ["とびいり"]
+
+
+def test_removing_a_participant_keeps_the_register(client):
+    """練習会から外しても台帳には残り、選び直せる。"""
+    session = create_session(client)
+    member = client.post(
+        f"/api/sessions/{session['token']}/members",
+        json={"nickname": "もどる", "gender": "male", "level": "pickleball"},
+    ).json()
+
+    assert client.delete(f"/api/members/{member['id']}").status_code == 204
+    assert client.get(f"/api/sessions/{session['token']}/members").json() == []
+
+    person = client.get("/api/people").json()[0]
+    again = client.post(
+        f"/api/sessions/{session['token']}/members", json={"person_id": person["id"]}
+    )
+    assert again.status_code == 201 and again.json()["nickname"] == "もどる"
+
+
+def test_deleting_from_the_register_leaves_the_session_alone(client):
+    """台帳から消しても、進行中の練習会の参加者は残る。"""
+    session = create_session(client)
+    add_members(client, session["token"], 8)
+    people = client.get("/api/people").json()
+
+    assert client.delete(f"/api/people/{people[0]['id']}").status_code == 204
+
+    members = client.get(f"/api/sessions/{session['token']}/members").json()
+    assert len(members) == 8
+
+
+def test_the_register_shows_what_is_needed_to_clean_up_duplicates(client):
+    """番号違いの同名と、取り込み／手登録の別を出す。
+
+    手で登録したあとに同じ人を取り込んでしまった、という形がこれ。統合は
+    しないので、どちらを消すかを選べるだけの手掛かりを一覧に出す。
+    """
+    session = create_session(client)
+    for _ in range(2):
+        client.post(
+            f"/api/sessions/{session['token']}/members",
+            json={"nickname": "かぶり", "gender": "male", "level": "pickleball"},
+        )
+
+    people = client.get("/api/people").json()
+    assert [p["nickname"] for p in people] == ["かぶり", "かぶり2"]
+    assert all(p["duplicate"] for p in people), "番号違いの同名を知らせていない"
+    assert all(p["sessions"] == 1 for p in people), "どの練習会に入っているか分からない"
+
+
+def test_unrelated_names_ending_in_digits_are_not_flagged(client):
+    """「m1」「m2」のような別々の名前を、番号違いの同名と間違えない。"""
+    for name in ("m1", "m2"):
+        client.post(
+            "/api/people", json={"nickname": name, "gender": "male", "level": "pickleball"}
+        )
+    assert not any(p["duplicate"] for p in client.get("/api/people").json())
+
+
+def test_a_person_of_another_owner_is_not_listed(client, db):
+    """よその団体の人は一覧にも出ないし、参加者にもできない。"""
+    from app.models import Owner
+    from app.services import people as people_service
+
+    other = Owner(name="よその団体")
+    db.add(other)
+    db.commit()
+    stranger = people_service.add_person(
+        db, other, nickname="よその人", gender=Gender.MALE, level=Level.PICKLEBALL
+    )
+
+    assert client.get("/api/people").json() == []
+    session = create_session(client)
+    response = client.post(
+        f"/api/sessions/{session['token']}/members", json={"person_id": stranger.id}
+    )
+    assert response.status_code == 404

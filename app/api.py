@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from collections import Counter
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Annotated
@@ -58,32 +57,30 @@ from app.services import stats as stats_service
 #: 識別しても意味が無い。空にして、画面側の知らせを出さないようにする。
 SERVER_INSTANCE = "" if IS_SERVERLESS else secrets.token_hex(8)
 
-router = APIRouter(prefix="/api")
-
 DbSession = Annotated[Session, Depends(get_db)]
 """リクエストごとの DB セッション。"""
-
-
-@router.get("/health")
-def health() -> dict[str, str]:
-    """死活監視用。"""
-    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
 # 合言葉
 #
-# **いたずら防止であって、秘密を守る仕組みではない。** 練習会のトークンを
-# 持っていれば通る画面（管理・全体表示・メンバー）は今までどおり素通しにする。
-# QR を読んだメンバーに合言葉を聞くわけにいかないため。門をかけるのは
-# 「トークンを持っていなくても叩ける」入口、つまり練習会の一覧・作成と台帳。
+# **いたずら防止であって、秘密を守る仕組みではない。** 知らない人に練習会を
+# 作られたり名簿を覗かれたりしないようにするだけ。
+#
+# メンバー用画面は QR を読んだ人がその場で開くので、ここに合言葉を掛ける
+# わけにいかない。逆に、管理画面と全体表示画面はトップ画面を通ってから開く
+# ものとして、合言葉を求める。
 # ---------------------------------------------------------------------------
 
 
 def require_admin(
     db: DbSession, pickle_admin: Annotated[str | None, Cookie()] = None
 ) -> Owner:
-    """合言葉を通しているか見て、いま見ている団体を返す。"""
+    """合言葉を通しているか見て、いま見ている団体を返す。
+
+    ルータ全体の依存としても、団体が要る endpoint の依存としても使う。
+    FastAPI は同じリクエストの中で1度しか解決しないので、二重には効かない。
+    """
     admin_id = auth.read_cookie(pickle_admin)
     admin = owners_service.get_admin(db, admin_id) if admin_id is not None else None
     if admin is None or not auth.cookie_matches(
@@ -97,7 +94,31 @@ CurrentOwner = Annotated[Owner, Depends(require_admin)]
 """合言葉を通した管理者が見ている団体。"""
 
 
-@router.post("/login", status_code=204)
+def _gate(owner: CurrentOwner) -> None:
+    """ルータ全体に掛ける門。団体は各 endpoint が自分で受け取る。"""
+
+
+public_router = APIRouter(prefix="/api")
+"""合言葉の要らない入口。
+
+メンバー用画面が使う read と、合言葉そのものだけ。
+"""
+
+router = APIRouter(prefix="/api", dependencies=[Depends(_gate)])
+"""合言葉が要る入口。
+
+ルータを分けたのは、**新しい API を足したときに既定で守られる**ようにするため。
+公開してよいものだけ `public_router` に置く。
+"""
+
+
+@public_router.get("/health")
+def health() -> dict[str, str]:
+    """死活監視用。"""
+    return {"status": "ok"}
+
+
+@public_router.post("/login", status_code=204)
 def login(payload: LoginRequest, response: Response, db: DbSession) -> None:
     """合言葉を確かめ、通ったことをクッキーに残す。"""
     admin = owners_service.authenticate(db, payload.password)
@@ -111,7 +132,7 @@ def login(payload: LoginRequest, response: Response, db: DbSession) -> None:
     )
 
 
-@router.post("/logout", status_code=204)
+@public_router.post("/logout", status_code=204)
 def logout(response: Response) -> None:
     response.delete_cookie(auth.COOKIE_NAME, path="/")
 
@@ -203,6 +224,7 @@ def _member_out(member: Member, plays: dict[int, int]) -> MemberOut:
         level=member.level,
         status=member.status,
         plays=plays.get(member.id, 0),
+        person_id=member.person_id,
     )
 
 
@@ -345,12 +367,12 @@ def _person_out(person: Person, *, duplicate: bool, sessions: int) -> PersonOut:
 
 def _people_out(db: Session, owner: Owner) -> list[PersonOut]:
     people = people_service.list_people(db, owner)
-    counts = Counter(person.nickname for person in people)
+    numbered = people_service.numbered_pairs(people)
     joined = people_service.session_counts(db, owner)
     return [
         _person_out(
             person,
-            duplicate=counts[person.nickname] > 1,
+            duplicate=person.id in numbered,
             sessions=joined.get(person.id, 0),
         )
         for person in people
@@ -584,7 +606,7 @@ def rounds_duplicate_names(db: Session, round_: Round | None) -> list[str]:
     return sessions_service.match_duplicate_nicknames(db, round_.id if round_ else None)
 
 
-@router.get("/sessions/{session_token}/current", response_model=CurrentOut)
+@public_router.get("/sessions/{session_token}/current", response_model=CurrentOut)
 def get_current(session_token: str, request: Request, db: DbSession) -> CurrentOut:
     """表示画面が2秒おきに読むエンドポイント。"""
     return _build_current(db, sessions_service.get_session(db, session_token), request)

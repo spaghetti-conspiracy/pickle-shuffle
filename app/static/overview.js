@@ -8,6 +8,7 @@
 import {
   $,
   api,
+  bounceToTop,
   createAlarm,
   createClock,
   createGate,
@@ -384,6 +385,20 @@ if (!sessionToken) {
   document.body.dataset.ready = "1";
 } else {
   rememberSessionToken(sessionToken);
+  // この画面は開始・スキップを押せるので、合言葉を通っていることを先に確かめる。
+  // 表示だけの読み取りは合言葉なしでも通るため、確かめないと「見えるのに
+  // 押しても動かない画面」になる。
+  api
+    .get(`/api/sessions/${sessionToken}`)
+    .then(start)
+    .catch((error) => {
+      if (bounceToTop(error)) return;
+      // 通信の瞬断。表示は続ける（次のポーリングで復帰する）。
+      start();
+    });
+}
+
+function start() {
   // 読み込めたときだけ出す。練習会が消えているとリンク切れのアイコンが出てしまう。
   const qr = $("qr");
   qr.addEventListener("load", () => qr.classList.remove("hidden"));

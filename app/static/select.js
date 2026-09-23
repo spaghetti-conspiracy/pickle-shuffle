@@ -4,7 +4,7 @@
  * 画面を分けてある。ここで選んだら管理画面へ移る。
  */
 
-import { api, rememberSessionToken } from "/api.js";
+import { api, createPasswordGate, rememberSessionToken } from "/api.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -70,7 +70,9 @@ $("create-session").addEventListener("click", async () => {
   openSession(session.token);
 });
 
-loadSessions().catch((error) => {
+const gate = createPasswordGate({ load: loadSessions });
+
+gate.enter().catch((error) => {
   // 捕まえないと、空のプルダウンが並んだ一見正常な画面になる。
   // 既存の練習会があるのに新しく作られると、その日の記録が分断される。
   showError(`練習会の一覧を読めません（${error.message}）`);

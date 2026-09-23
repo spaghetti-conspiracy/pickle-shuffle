@@ -1,0 +1,160 @@
+"""合言葉の門。
+
+**いたずら防止であって、秘密を守る仕組みではない。** 練習会のトークンを
+持っている人（QR を読んだメンバー、管理画面を開いている人）は今までどおり
+通れる。門をかけるのは、トークンを持たなくても叩ける入口だけ。
+"""
+
+from __future__ import annotations
+
+from app.auth import COOKIE_NAME, hash_password, issue_cookie, verify_password
+from app.config import settings
+from tests.test_api import add_members, create_session
+
+GATED = [
+    ("get", "/api/sessions"),
+    ("post", "/api/sessions"),
+    ("get", "/api/people"),
+    ("post", "/api/people"),
+]
+"""合言葉が要る入口の代表。実際はメンバー用画面が使う read 以外すべて。"""
+
+
+def test_the_password_is_not_stored_in_the_clear():
+    stored = hash_password("ひみつ")
+    assert "ひみつ" not in stored
+    assert stored.startswith("pbkdf2_sha256$")
+    assert verify_password("ひみつ", stored)
+    assert not verify_password("ちがう", stored)
+
+
+def test_a_wrong_password_is_refused(guest_client):
+    response = guest_client.post("/api/login", json={"password": "ちがう"})
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthorized"
+
+
+def test_the_right_password_opens_the_gate(guest_client):
+    assert guest_client.get("/api/sessions").status_code == 401
+    response = guest_client.post(
+        "/api/login", json={"password": settings.admin_password}
+    )
+    assert response.status_code == 204
+    assert COOKIE_NAME in response.cookies
+    assert guest_client.get("/api/sessions").status_code == 200
+
+
+def test_every_gated_entrance_is_closed(guest_client):
+    """合言葉を持たない人が、練習会や台帳を触れないこと。"""
+    for method, path in GATED:
+        call = getattr(guest_client, method)
+        response = call(path) if method == "get" else call(path, json={})
+        assert response.status_code == 401, f"{method} {path} が素通りしている"
+
+
+def test_logging_out_closes_the_gate_again(client):
+    assert client.get("/api/sessions").status_code == 200
+    assert client.post("/api/logout").status_code == 204
+    assert client.get("/api/sessions").status_code == 401
+
+
+def test_a_forged_cookie_does_not_pass(guest_client):
+    """中身を作っただけのクッキーでは通らない。"""
+    guest_client.cookies.set(COOKIE_NAME, "1:" + "0" * 64)
+    assert guest_client.get("/api/sessions").status_code == 401
+
+
+def test_changing_the_password_invalidates_old_cookies(guest_client, db):
+    """パスワードを変えたら、前のクッキーは通らない。
+
+    クッキーの署名鍵がパスワードのハッシュなので、DB を作り直さなくても
+    古い端末が締め出される。
+    """
+    from sqlalchemy import select
+
+    from app.models import Admin
+
+    guest_client.post("/api/login", json={"password": settings.admin_password})
+    assert guest_client.get("/api/sessions").status_code == 200
+
+    admin = db.scalars(select(Admin)).one()
+    admin.password_hash = hash_password("あたらしい合言葉")
+    db.commit()
+
+    assert guest_client.get("/api/sessions").status_code == 401
+
+
+def test_the_cookie_belongs_to_one_admin(db):
+    """別の管理者の署名では通らない。"""
+    from sqlalchemy import select
+
+    from app.models import Admin
+
+    admin = db.scalars(select(Admin)).one()
+    assert issue_cookie(admin.id, admin.password_hash) != issue_cookie(
+        admin.id + 1, admin.password_hash
+    )
+
+
+# ---------------------------------------------------------------------------
+# 門をかけない入口
+# ---------------------------------------------------------------------------
+
+
+def test_the_member_screen_needs_no_password(client, guest_client):
+    """QR を読んだメンバーは合言葉なしで見られる。
+
+    ここに門をかけると、練習会のたびに全員へ合言葉を配ることになる。
+    メンバー用画面が使うのはこの1本だけなので、開けるのもこれだけでよい。
+    """
+    session = create_session(client)
+    add_members(client, session["token"], 8)
+    client.post(f"/api/sessions/{session['token']}/rounds/generate")
+
+    response = guest_client.get(f"/api/sessions/{session['token']}/current")
+    assert response.status_code == 200
+    assert len(response.json()["courts"]) == 2
+
+
+def test_everything_else_is_behind_the_gate(client, guest_client):
+    """管理画面と全体表示画面が使う入口は、合言葉なしでは通らない。
+
+    見えるのに押しても動かない画面を作らないため、表示だけの read も含めて
+    閉めてある（画面側はトップへ戻す）。
+    """
+    session = create_session(client)
+    add_members(client, session["token"], 8)
+    pending = client.post(
+        f"/api/sessions/{session['token']}/rounds/generate"
+    ).json()
+
+    token = session["token"]
+    closed = [
+        ("get", f"/api/sessions/{token}"),
+        ("get", f"/api/sessions/{token}/members"),
+        ("get", f"/api/sessions/{token}/stats"),
+        ("get", f"/api/sessions/{token}/member-qr.svg"),
+        ("post", f"/api/sessions/{token}/rounds/generate"),
+        ("post", f"/api/rounds/{pending['round_id']}/adopt"),
+        ("post", f"/api/rounds/{pending['round_id']}/timer/pause"),
+    ]
+    for method, path in closed:
+        call = getattr(guest_client, method)
+        response = call(path) if method == "get" else call(path, json={})
+        assert response.status_code == 401, f"{method} {path} が素通りしている"
+
+
+def test_a_new_endpoint_is_closed_by_default(client):
+    """ルータを分けてあるので、足した API は既定で守られる。
+
+    公開してよいものだけ `public_router` に置く、という形を崩さないための番人。
+    """
+    from app.api import public_router
+
+    opened = {(list(route.methods)[0], route.path) for route in public_router.routes}
+    assert opened == {
+        ("GET", "/api/health"),
+        ("POST", "/api/login"),
+        ("POST", "/api/logout"),
+        ("GET", "/api/sessions/{session_token}/current"),
+    }, "公開する入口が増えている。メンバー用画面に本当に必要か確かめること"

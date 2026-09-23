@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
-from app.api import router
+from app.api import public_router, router
 from app.db import SessionLocal, create_all
 from app.errors import AppError
 from app.services.owners import ensure_bootstrap
@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
             response.headers.setdefault("Cache-Control", "no-store")
         return response
 
+    app.include_router(public_router)
     app.include_router(router)
     app.mount("/", RevalidatingStaticFiles(directory=STATIC_DIR, html=True), name="static")
     return app

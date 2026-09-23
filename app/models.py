@@ -88,6 +88,9 @@ class PracticeSession(Base):
 
     name: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    highlight_beginners: Mapped[bool] = mapped_column(Boolean, default=False)
+    """表示画面で初心者の名前を緑にするか。アルゴリズムの確認用で、ふだんは off。"""
+
     random_seed: Mapped[int] = mapped_column(BigInteger, default=new_random_seed)
     """この練習会の非決定性の種。作成時に採番し、以後不変。"""
 

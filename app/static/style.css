@@ -81,6 +81,21 @@ a {
   display: none !important;
 }
 
+/* 練習会が消えているときは、古い情報を残さず、これだけを出す。 */
+.gone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: clamp(1.3rem, 5vw, 2.5rem);
+  font-weight: 700;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -259,12 +274,16 @@ tr.left {
   gap: 0.15em;
 }
 
+/* 名前は折り返さず、長いときは文字を縮めて1行に収める。
+   2行になると誰の名前か読み取りにくく、読み上げにも使いにくい。
+   --len には文字数が入る（描画時に設定する）。全角1文字をほぼ1em として、
+   収まる幅から逆算した大きさと、通常の大きさの小さい方を採る。 */
 .player {
-  font-size: clamp(1.25rem, 3.4vw, 2.2rem);
+  font-size: max(0.85rem, min(2.2rem, calc(40vw / var(--len, 4))));
   font-weight: 700;
   line-height: 1.15;
   text-align: center;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .versus {
@@ -328,6 +347,19 @@ tr.left {
   margin-top: 0.4rem;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.qr .url {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.qr .notice {
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.5;
 }
 
 /* 読み上げながらでも押せるよう、操作は下に固定する。 */

@@ -60,11 +60,10 @@ def test_health(client):
         ("/", "練習会を選ぶ"),
         ("/manage.html", "練習会の管理"),
         ("/overview.html", "全体表示"),
-        ("/member.html", "コート表示"),
     ],
 )
-def test_the_four_screens_are_served(client, path, marker):
-    """作成・選択 / 管理 / 全体表示 / メンバー用 の4画面を配信する。"""
+def test_the_three_screens_are_served(client, path, marker):
+    """作成・選択 / 管理 / 全体表示 の3画面を配信する。"""
     response = client.get(path)
     assert response.status_code == 200
     assert marker in response.text
@@ -84,7 +83,7 @@ def test_static_files_are_revalidated(client):
 
     ETag は付いているので、変わっていなければ 304 が返るだけで通信量は増えない。
     """
-    for path in ("/", "/overview.js", "/member.js", "/style.css"):
+    for path in ("/", "/overview.js", "/style.css"):
         response = client.get(path)
         assert response.headers.get("cache-control") == "no-cache", path
         assert response.headers.get("etag"), path

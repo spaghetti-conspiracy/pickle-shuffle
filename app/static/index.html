@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>メンバー登録 — ピックルボール対戦カード</title>
+<title>練習会を選ぶ — ピックルボール対戦カード</title>
 <link rel="icon" href="/favicon.svg">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -13,10 +13,9 @@
 
   <section>
     <h2>練習会</h2>
-    <div class="row">
+    <div id="pick" class="row">
       <select id="session-select" aria-label="練習会を選ぶ"></select>
-      <button id="open-display">全体表示画面を開く</button>
-      <button id="delete-session" class="danger">この練習会の記録を破棄</button>
+      <button id="open-session" class="primary">開く</button>
     </div>
     <div class="row" style="margin-top:0.75rem">
       <input id="new-session-name" placeholder="新しい練習会の名前" size="20">
@@ -27,52 +26,10 @@
       </label>
       <button id="create-session" class="primary">作成</button>
     </div>
+    <p id="error" class="error"></p>
     <p class="notice">コート数は作成時に決めます。あとから個々のコートを試合用から外せます。</p>
   </section>
-
-  <section id="courts-section">
-    <h2>コート</h2>
-    <div class="table-scroll">
-      <table>
-        <thead><tr><th>名前</th><th>使い方</th></tr></thead>
-        <tbody id="courts-body"></tbody>
-      </table>
-    </div>
-    <p class="notice">
-      初心者の育成などで1面を練習に使うときは「練習コート」にします。
-      試合から外れるメンバーは「休憩」にしてください。
-    </p>
-  </section>
-
-  <section id="members-section">
-    <h2>メンバー</h2>
-    <div class="row">
-      <input id="new-nickname" list="known-nicknames" placeholder="ニックネーム" size="14">
-      <datalist id="known-nicknames"></datalist>
-      <select id="new-gender">
-        <option value="male">男性</option>
-        <option value="female">女性</option>
-        <option value="other">その他</option>
-      </select>
-      <select id="new-level">
-        <option value="pickleball">ピックルボール経験者</option>
-        <option value="racket_experienced">ラケット経験者（ルール不明）</option>
-        <option value="beginner">未経験者</option>
-      </select>
-      <button id="add-member" class="primary">追加</button>
-    </div>
-    <p id="member-error" class="error"></p>
-    <div class="table-scroll">
-      <table>
-        <thead>
-          <tr><th>ニックネーム</th><th>性別</th><th>レベル</th><th>試合数</th><th>操作</th></tr>
-        </thead>
-        <tbody id="members-body"></tbody>
-      </table>
-    </div>
-    <p id="duplicate-notice" class="notice hidden"></p>
-  </section>
 </div>
-<script type="module" src="/admin.js"></script>
+<script type="module" src="/select.js"></script>
 </body>
 </html>

@@ -1,49 +1,37 @@
-/** 管理画面。練習会・コート・メンバーを操作する。 */
+/** 練習会の管理画面。
+ *
+ * どの練習会を扱うかは作成・選択画面（/）で決まっているので、ここでは
+ * その練習会のコートとメンバーだけを扱う。
+ */
 
 import {
   api,
-  currentSessionId,
+  currentSessionToken,
   GENDER_LABELS,
   LEVEL_LABELS,
-  rememberSessionId,
+  rememberSessionToken,
 } from "/api.js";
 
 const $ = (id) => document.getElementById(id);
 
-let sessionId = currentSessionId();
+const sessionToken = currentSessionToken();
 let profiles = [];
+/** いまの練習会に登録済みのニックネーム。入力候補から外すために持っておく。 */
+let registered = new Set();
 
 function showError(message) {
   $("member-error").textContent = message ?? "";
 }
 
-async function loadSessions() {
-  const sessions = await api.get("/api/sessions");
-  const select = $("session-select");
-  select.innerHTML = "";
-  for (const session of sessions) {
-    const option = document.createElement("option");
-    option.value = String(session.id);
-    option.textContent = session.name;
-    select.append(option);
-  }
-  if (sessions.length === 0) {
-    sessionId = null;
-  } else if (!sessions.some((s) => s.id === sessionId)) {
-    sessionId = sessions[0].id;
-  }
-  if (sessionId) {
-    select.value = String(sessionId);
-    rememberSessionId(sessionId);
-  }
-  const hasSession = sessionId !== null;
-  $("courts-section").classList.toggle("hidden", !hasSession);
-  $("members-section").classList.toggle("hidden", !hasSession);
+async function loadSession() {
+  const session = await api.get(`/api/sessions/${sessionToken}`);
+  document.title = `${session.name} — 練習会の管理`;
+  $("session-name").textContent = session.name;
+  return session;
 }
 
 async function loadCourts() {
-  if (!sessionId) return;
-  const session = await api.get(`/api/sessions/${sessionId}`);
+  const session = await api.get(`/api/sessions/${sessionToken}`);
   const body = $("courts-body");
   body.innerHTML = "";
   for (const court of session.courts) {
@@ -54,7 +42,7 @@ async function loadCourts() {
     nameInput.value = court.name;
     nameInput.size = 12;
     nameInput.addEventListener("change", async () => {
-      await api.patch(`/api/sessions/${sessionId}/courts/${court.id}`, {
+      await api.patch(`/api/sessions/${sessionToken}/courts/${court.id}`, {
         name: nameInput.value,
       });
     });
@@ -66,7 +54,7 @@ async function loadCourts() {
     toggle.classList.toggle("primary", court.in_use);
     toggle.addEventListener("click", async () => {
       try {
-        await api.patch(`/api/sessions/${sessionId}/courts/${court.id}`, {
+        await api.patch(`/api/sessions/${sessionToken}/courts/${court.id}`, {
           in_use: !court.in_use,
         });
         showError("");
@@ -84,9 +72,18 @@ async function loadCourts() {
 
 async function loadProfiles() {
   profiles = await api.get("/api/member-profiles");
+  renderProfileOptions();
+}
+
+/** 入力候補を描き直す。すでに登録済みの人は出さない（選んでも二重登録になるだけ）。
+ *
+ * メンバー一覧と候補はどちらが先に読み終わるか決まらないので、
+ * 両方の更新からここを呼んで、そのときに分かっている情報で組み立てる。 */
+function renderProfileOptions() {
   const list = $("known-nicknames");
   list.innerHTML = "";
   for (const profile of profiles) {
+    if (registered.has(profile.nickname)) continue;
     const option = document.createElement("option");
     option.value = profile.nickname;
     list.append(option);
@@ -120,8 +117,9 @@ function statusButton(member) {
 }
 
 async function loadMembers() {
-  if (!sessionId) return;
-  const members = await api.get(`/api/sessions/${sessionId}/members`);
+  const members = await api.get(`/api/sessions/${sessionToken}/members`);
+  registered = new Set(members.map((m) => m.nickname));
+  renderProfileOptions();
   const counts = {};
   for (const member of members) counts[member.nickname] = (counts[member.nickname] ?? 0) + 1;
 
@@ -179,65 +177,32 @@ async function loadMembers() {
         "試合表示でどちらか分からなくなるので、名前を変えることをおすすめします。";
 }
 
+
 async function refresh() {
-  await loadSessions();
+  await loadSession();
   await Promise.all([loadCourts(), loadMembers(), loadProfiles()]);
-  // 読み込みが終わったことを示す。操作の前にこれを待てばよい。
   document.body.dataset.ready = "1";
 }
 
-$("session-select").addEventListener("change", async (event) => {
-  sessionId = Number(event.target.value);
-  rememberSessionId(sessionId);
-  await refresh();
+$("open-overview").addEventListener("click", () => {
+  window.open(`/overview.html?session=${sessionToken}`, "_blank");
 });
 
-$("create-session").addEventListener("click", async () => {
-  const name = $("new-session-name").value.trim();
-  if (!name) {
-    showError("練習会の名前を入力してください");
-    return;
-  }
+$("finish-session").addEventListener("click", async () => {
+  const name = $("session-name").textContent;
+  if (!confirm(`「${name}」を終了します。記録は破棄されます。よろしいですか？`)) return;
   try {
-    const session = await api.post("/api/sessions", {
-      name,
-      court_count: Number($("new-session-courts").value),
-    });
-    $("new-session-name").value = "";
-    sessionId = session.id;
-    rememberSessionId(sessionId);
-    showError("");
-    await refresh();
+    await api.del(`/api/sessions/${sessionToken}`);
+    location.href = "/";
   } catch (error) {
     showError(error.message);
   }
-});
-
-$("delete-session").addEventListener("click", async () => {
-  if (!sessionId) return;
-  const name = $("session-select").selectedOptions[0]?.textContent ?? "";
-  if (!confirm(`「${name}」の記録を破棄します。よろしいですか？`)) return;
-  await api.del(`/api/sessions/${sessionId}`);
-  sessionId = null;
-  await refresh();
-});
-
-$("open-display").addEventListener("click", () => {
-  if (!sessionId) {
-    showError("先に練習会を作成または選択してください");
-    return;
-  }
-  window.open(`/overview.html?session=${sessionId}`, "_blank");
 });
 
 $("new-nickname").addEventListener("change", autofillFromProfile);
 $("new-nickname").addEventListener("blur", autofillFromProfile);
 
 $("add-member").addEventListener("click", async () => {
-  if (!sessionId) {
-    showError("先に練習会を作成または選択してください");
-    return;
-  }
   const input = $("new-nickname");
   const nickname = input.value.trim();
   if (!nickname) {
@@ -249,7 +214,7 @@ $("add-member").addEventListener("click", async () => {
   input.value = "";
   input.focus();
   try {
-    await api.post(`/api/sessions/${sessionId}/members`, {
+    await api.post(`/api/sessions/${sessionToken}/members`, {
       nickname,
       gender: $("new-gender").value,
       level: $("new-level").value,
@@ -262,4 +227,13 @@ $("add-member").addEventListener("click", async () => {
   }
 });
 
-refresh();
+if (!sessionToken) {
+  // 練習会が決まっていなければ、選ぶところへ戻す。
+  location.replace("/");
+} else {
+  rememberSessionToken(sessionToken);
+  refresh().catch(() => {
+    // 破棄された練習会の URL を開いた場合など。選び直してもらう。
+    location.replace("/");
+  });
+}

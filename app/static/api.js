@@ -32,18 +32,65 @@ export const LEVEL_LABELS = {
   beginner: "未経験者",
 };
 
-/** 練習会 id を URL から読む。無ければ最後に見たものを使う。 */
-export function currentSessionId() {
+/** 練習会のトークンを URL から読む。無ければ最後に見たものを使う。
+ *
+ * 連番だと他の練習会を推測できてしまうので、URL に出す識別子はトークンにしてある。
+ */
+export function currentSessionToken() {
   const fromUrl = new URLSearchParams(location.search).get("session");
-  if (fromUrl) return Number(fromUrl);
-  const saved = localStorage.getItem("pickle.session");
-  return saved ? Number(saved) : null;
+  if (fromUrl) return fromUrl;
+  try {
+    return localStorage.getItem("pickle.session");
+  } catch {
+    return null;
+  }
 }
 
-export function rememberSessionId(id) {
+export function rememberSessionToken(token) {
   try {
-    localStorage.setItem("pickle.session", String(id));
+    localStorage.setItem("pickle.session", token);
   } catch {
     // プライベートウィンドウなどで保存できなくても動作には影響しない。
   }
+}
+
+/** 画面が見えている間だけ、定期的に ``run`` を呼ぶ。
+ *
+ * メンバーがスマートフォンをポケットに入れている間もポーリングを続けると、
+ * 人数ぶんの通信が延々と積み上がる。見えていない間は止め、画面に戻した瞬間に
+ * 1回走らせて最新にする。
+ *
+ * 返り値の ``stop()`` で完全に止められる（練習会が消えたときなど）。
+ */
+export function startPolling(run, intervalMs) {
+  let timer = null;
+
+  const resume = () => {
+    if (timer === null) timer = setInterval(run, intervalMs);
+  };
+  const pause = () => {
+    if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+  const onVisibilityChange = () => {
+    if (document.hidden) {
+      pause();
+    } else {
+      run(); // 戻ってきた時点の状態をすぐ見せる
+      resume();
+    }
+  };
+
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  run();
+  if (!document.hidden) resume();
+
+  return {
+    stop() {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      pause();
+    },
+  };
 }

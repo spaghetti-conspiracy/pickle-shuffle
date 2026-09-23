@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>練習会の管理 — ピックルボール対戦カード</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="admin">
+  <section>
+    <div class="row">
+      <h1 id="session-name"></h1>
+      <button id="open-overview" class="primary">全体画面を開く</button>
+      <button id="finish-session" class="danger">この練習会を終了する</button>
+    </div>
+    <p class="notice"><a href="/">別の練習会を選ぶ</a></p>
+  </section>
+
+  <section id="courts-section">
+    <h2>コート</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>名前</th><th>使い方</th></tr></thead>
+        <tbody id="courts-body"></tbody>
+      </table>
+    </div>
+    <p class="notice">
+      初心者の育成などで1面を練習に使うときは「練習コート」にします。
+      試合から外れるメンバーは「休憩」にしてください。
+    </p>
+  </section>
+
+  <section id="members-section">
+    <h2>メンバー</h2>
+    <div class="row">
+      <input id="new-nickname" list="known-nicknames" placeholder="ニックネーム" size="14">
+      <datalist id="known-nicknames"></datalist>
+      <select id="new-gender">
+        <option value="male">男性</option>
+        <option value="female">女性</option>
+        <option value="other">その他</option>
+      </select>
+      <select id="new-level">
+        <option value="pickleball">ピックルボール経験者</option>
+        <option value="racket_experienced">ラケット経験者（ルール不明）</option>
+        <option value="beginner">未経験者</option>
+      </select>
+      <button id="add-member" class="primary">追加</button>
+    </div>
+    <p id="member-error" class="error"></p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>ニックネーム</th><th>性別</th><th>レベル</th><th>試合数</th><th>操作</th></tr>
+        </thead>
+        <tbody id="members-body"></tbody>
+      </table>
+    </div>
+    <p id="duplicate-notice" class="notice hidden"></p>
+  </section>
+</div>
+<script type="module" src="/manage.js"></script>
+</body>
+</html>

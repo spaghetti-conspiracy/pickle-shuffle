@@ -8,7 +8,9 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="overview">
+<p id="gone" class="gone hidden">この練習会は見つかりません</p>
+
+<div id="overview" class="overview">
   <div class="overview-head">
     <h1 id="session-name"></h1>
     <span id="warnings" class="warnings"></span>
@@ -21,8 +23,14 @@
     <div class="side">
       <section class="qr">
         <h2>メンバー用画面</h2>
-        <img id="qr" alt="メンバー用画面のQRコード">
+        <img id="qr" class="hidden" alt="メンバー用画面のQRコード">
         <p class="hint">スマートフォンで読み取ると、自分のコートを見られます</p>
+        <p id="member-url" class="url"></p>
+        <p id="qr-warning" class="notice hidden">
+          この端末だけで通じるアドレスです。スマートフォンから使うには、
+          この画面を <b>PC の LAN の IP</b> で開き直してください。
+          （例: http://192.168.1.10:8000/）
+        </p>
       </section>
       <section>
         <h2>待機中</h2>
@@ -36,7 +44,7 @@
   </div>
 </div>
 
-<div class="action-bar">
+<div id="action-bar" class="action-bar">
   <button id="start" class="primary">開始</button>
   <button id="next">次のマッチ</button>
 </div>

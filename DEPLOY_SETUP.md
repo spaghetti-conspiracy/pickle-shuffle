@@ -245,12 +245,19 @@ boolean は `-F`、文字列は `-f`。`enforce_admins=true` にしないと、�
 
 1. Vercel の Deployments で URL を確認し、`STAGING_DOMAIN` に設定する
 2. staging を開いて、合言葉を入れて練習会を1つ作ってみる
-3. **テーブルは初回アクセス時に自動で作られる**（起動時に `create_all` が走る）。
-   先に作りたいときは手元から:
+3. **DB の用意は、手元から1度だけ実行する。**
 
    ```bash
-   DATABASE_URL='postgresql+psycopg://...' uv run python -m app.init_db
+   DATABASE_URL='<staging の接続文字列>' uv run python -m app.init_db
+   DATABASE_URL='<本番の接続文字列>'     ADMIN_PASSWORD='<本番の合言葉>' uv run python -m app.init_db
    ```
+
+   テーブルと、既定の団体・管理者がまとめて用意される。何度実行してもよい。
+
+   **サーバーレスでは、起動のたびの用意をしない。** 関数は冷えるたびに
+   起動し直すので、そのたびにテーブルの照合と合言葉のハッシュ計算をやると
+   1回目のアクセスが何秒も遅くなる（実測で10秒近く）。そのぶん、この1本を
+   忘れると「デプロイはできたのに合言葉が通らない」になる。
 
 `STAGING_DOMAIN` を設定すると、次のデプロイから smoke（健全性の確認）が走る。
 

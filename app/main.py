@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
 from app.api import public_router, router
+from app.config import settings
 from app.db import SessionLocal, create_all
 from app.errors import AppError
 from app.services.owners import ensure_bootstrap
@@ -34,7 +35,19 @@ class RevalidatingStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """起動時にテーブルを作り、既定の団体と管理者を用意する。"""
+    """起動時にテーブルを作り、既定の団体と管理者を用意する。
+
+    **サーバーレスでは毎回はやらない。** 関数は冷えるたびに起動し直すので、
+    そのたびにテーブルの照合（`create_all`）と合言葉のハッシュ計算
+    （pbkdf2 を20万回）をやると、冷えた1回目が10秒近くかかる。
+    手元の Postgres 相手でも 0.22 秒、遠い DB ならその何倍にもなる。
+
+    サーバーレスでは `SKIP_DB_INIT=1` を立てて、用意は
+    `python -m app.init_db` で1度だけ行う（DEPLOY_SETUP.md）。
+    """
+    if settings.skip_db_init:
+        yield
+        return
     create_all()
     with SessionLocal() as db:
         ensure_bootstrap(db)

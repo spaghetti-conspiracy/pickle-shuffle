@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, event, inspect, make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import QueuePool
 
 from app.config import IS_SERVERLESS, settings
 
@@ -23,9 +23,25 @@ def _engine_kwargs(url: str) -> dict:
     parsed = make_url(url)
     if not parsed.drivername.startswith("sqlite"):
         if IS_SERVERLESS:
-            # 関数インスタンスは短命で、プールを持っても次のリクエストには
-            # 引き継がれない。接続を貯め込んで DB 側の上限を食い潰さないようにする。
-            return {"poolclass": NullPool}
+            # **接続は使い回す。** 以前は「関数インスタンスは短命だから」と
+            # `NullPool` にしていたが、実際には温まっている間くり返し使われる。
+            # 毎回 TLS から張り直すと、遠い DB（Neon はアジアだとシンガポール
+            # しかない）では**それだけで2秒**かかっていた。
+            #
+            # 1インスタンスにつき1本だけ持つ。関数は同時に何十個も立ち上がる
+            # ので、1本ずつでも DB 側の上限には届く。貯め込まないこと。
+            return {
+                "poolclass": QueuePool,
+                "pool_size": 1,
+                "max_overflow": 0,
+                # 寝かせたままの接続は相手に切られていることがある。
+                # 使う前に1往復で確かめる（張り直すよりはるかに安い）。
+                "pool_pre_ping": True,
+                # Neon の無料枠はアイドルで止まる。長く持ち続けない。
+                "pool_recycle": 300,
+                # 空くのを待つより、待たせすぎない方がよい。
+                "pool_timeout": 10,
+            }
         return {"pool_pre_ping": True}
 
     # SQLite のファイル DB は置き場所を作っておく。

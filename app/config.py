@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from app.scheduler.domain import Weights
 
 DEFAULT_DATABASE_URL = "sqlite:///./data/app.db"
 
@@ -28,6 +30,15 @@ class Settings:
     スマートフォンから届かない。そういうときにここで上書きする。
     例: ``http://192.168.1.10:8000``
     """
+    weights: Weights = field(default_factory=Weights)
+    # 公平性の枠をどこまで緩めてよいか（試合数の差の上限）。既定の 0 は厳密公平。
+    fairness_slack: int = 0
+    # 何ラウンド先まで読むか。0 なら貪欲法。
+    lookahead: int = 1
+    # 先読みで比べる上位候補の数。
+    beam: int = 16
+    # 1回の生成で評価する候補集合の上限。超える分はサンプリングする。
+    max_candidate_sets: int = 60
 
 
 def _env_int(name: str, default: int) -> int:
@@ -46,6 +57,10 @@ def load_settings() -> Settings:
         database_url=os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL,
         port=_env_int("PORT", 8000),
         public_base_url=(os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/"),
+        fairness_slack=_env_int("FAIRNESS_SLACK", 0),
+        lookahead=_env_int("LOOKAHEAD", 1),
+        beam=_env_int("BEAM", 16),
+        max_candidate_sets=_env_int("MAX_CANDIDATE_SETS", 60),
     )
 
 

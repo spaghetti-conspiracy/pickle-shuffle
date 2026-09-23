@@ -181,6 +181,14 @@ class Round(Base):
     session_id: Mapped[int] = mapped_column(
         ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True
     )
+    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_round_seq"),)
+    """採用の通し番号は練習会の中で一意にする。
+
+    同じ seq が2本できると、不変則11の `(seed, round_seq, attempt)` から
+    同じ編成が導かれ、統計の順序付けも壊れる。pending / rejected は seq が
+    NULL で、NULL は SQLite でも PostgreSQL でも重複を許されるため妨げない。
+    """
+
     seq: Mapped[int | None] = mapped_column(Integer, default=None)
     """採用時にのみ採番する 1 起点の通し番号。pending / rejected では None。"""
 
@@ -212,6 +220,13 @@ class Match(Base):
     __tablename__ = "matches"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    __table_args__ = (UniqueConstraint("round_id", "court_id", name="uq_match_court"),)
+    """1ラウンドの同じコートに2試合は入らない。
+
+    入ると表示側が後勝ちで上書きし、片方が黙って消える。
+    読み上げに使う画面なので、消えるより落ちた方がよい。
+    """
+
     round_id: Mapped[int] = mapped_column(ForeignKey("rounds.id", ondelete="CASCADE"), index=True)
     court_id: Mapped[int] = mapped_column(ForeignKey("courts.id", ondelete="CASCADE"), index=True)
 
@@ -229,6 +244,9 @@ class MatchSlot(Base):
     """試合の出場枠。1試合あたり4行（チーム0が2行、チーム1が2行）。"""
 
     __tablename__ = "match_slots"
+
+    __table_args__ = (UniqueConstraint("match_id", "member_id", name="uq_slot_member"),)
+    """同じ人が同じ試合に2枠入らない。"""
 
     id: Mapped[int] = mapped_column(primary_key=True)
     match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), index=True)

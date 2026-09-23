@@ -6,6 +6,7 @@ doc/spec.md の要求を性質として検証する（CLAUDE.md「テストを�
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import random
 from collections import Counter
@@ -21,10 +22,12 @@ from app.scheduler.domain import (
     PairKind,
     PlayerStat,
     RoundPlan,
+    Weights,
 )
 from app.scheduler.generator import (
     PAIRINGS_OF_FOUR,
     _pair_kind,
+    gender_cost,
     generate_round,
     make_rng,
     split_into_matches,
@@ -205,6 +208,33 @@ def test_a_long_rest_costs_only_one_match_of_deficit():
     assert max(p.adjusted for p in others) - rested.adjusted == 1, "欠損はちょうど1試合分"
 
 
+def test_a_long_rest_costs_one_match_even_when_slots_are_spare():
+    """出場枠が余る人数でも、固め休みの欠損は1試合分のまま。
+
+    10名2面だと毎ラウンド2人が余るので、通常のローテーションによる揺れが
+    休憩ぶんの欠損に重なる。両者は別物なので分けて確かめる。
+    （このケースは以前 9名に差し替えられて失われていた。）
+    """
+    sim = Simulator(make_members(10), seed=31337)
+    sim.run(2)
+    resting_id = sim.adopted_plans[-1].playing[0]
+    before = sim.stat(resting_id).adjusted
+
+    sim.set_status(resting_id, MemberStatus.RESTING)
+    sim.run(3)
+    sim.set_status(resting_id, MemberStatus.ACTIVE)
+
+    rested = sim.stat(resting_id)
+    assert rested.plays == before, "休んでいる間は出場していない"
+    assert rested.rest_credit == 2, "3ラウンドの休みブロックは 3-1=2 のみなし出場"
+    assert rested.adjusted == before + 2, "欠損は人数によらず1試合分"
+
+    # 復帰後は枠の中で追いつく。ローテーションの揺れは slack+1 に収まる。
+    sim.run(8)
+    adjusted = [p.adjusted for p in sim.player_stats()]
+    assert max(adjusted) - min(adjusted) <= 1
+
+
 def test_returning_member_is_put_back_in_quickly():
     """休み明けはなるべく早くマッチに入れる（優先度7）。"""
     sim = Simulator(make_members(12), seed=606)
@@ -340,10 +370,11 @@ def test_almost_everyone_shares_a_court_with_everyone():
     16名24ラウンドだと1人あたりの同席は 12試合 x 3人 = 36回で、相手は15人。
     全員と当たれるかどうかは回り方次第なので、全員必達は保証できない。
 
-    閾値の根拠（2026-09-23 実測、10シード）:
+    閾値の根拠（2026-09-23 実測、シード 9000-9009 の10本）:
     「ペアの強さを揃える」減点（`strength_gap`）を入れると、左右の強さを合わせる分だけ
-    対戦相手の自由度が減り、最少が 14人 から 13人 に下がるシードが出る（10中2）。
-    重みを 5 に下げても同じ悪化が出るので、重みの調整では解けない。機能そのものの代償。
+    対戦相手の自由度が減り、最少が 14人 から 13人 に下がるシードが出る。
+    既定の 15 では 1本（seed=9000）、5 や 10 に下げると 2本で、下げても悪化は消えない。
+    重みの調整では解けない＝機能そのものの代償。
     ユーザー判断で「強さを揃える」を優先し、ここは実測に合わせてある。
 
     最少だけだと1人の運で揺れるので、平均も併せて見張る。実測は 14.75〜15.00 で、
@@ -437,6 +468,28 @@ def test_registration_order_does_not_leak_into_the_selection():
     assert 7.0 <= average <= 10.0, f"出場者の id が偏っている (平均 {average})"
 
 
+def test_court_partners_are_not_biased_towards_small_ids():
+    """同点だらけの状況で、誰と同じコートになるかが id に偏らない。
+
+    3面以上では候補を刈り込むので、そこで同点の扱いを誤ると
+    「id の小さい組だけが生き残る」形で登録順が透ける（不変則9/10）。
+    ラウンド全体の署名はばらけて見えるため、個人ごとの同席分布で見る。
+    """
+    players = uniform_players(12)
+    partners: Counter = Counter()
+    for seed in range(120):
+        plan = generate_round(
+            players, History(), court_count=3, seed=seed, rng=make_rng(seed, 1, 0)
+        )
+        for match in plan.matches:
+            if players[0].id in match.member_ids:
+                partners.update(x for x in match.member_ids if x != players[0].id)
+
+    assert len(partners) == 11, "同席していない相手がいる"
+    average = sum(pid * n for pid, n in partners.items()) / sum(partners.values())
+    assert 6.0 <= average <= 8.0, f"同席相手の id が偏っている（平均 {average:.2f}、一様なら 7.0）"
+
+
 def test_tied_arrangements_are_drawn_uniformly():
     """同点の編成は先頭採用ではなく一様抽選する。
 
@@ -464,7 +517,10 @@ def test_different_sessions_play_out_differently():
         sim = Simulator(players, seed=seed)
         plan = sim.generate()
         signatures.add(plan.signature())
-    assert len(signatures) >= 2
+    assert len(signatures) >= 15, (
+        f"20シード中 {len(signatures)} 通りしか出ていない。"
+        "練習会ごとに展開が変わると言えない"
+    )
 
 
 def test_same_seed_reproduces_the_same_result():
@@ -560,6 +616,26 @@ def test_beginners_are_never_paired_together(count, beginners):
     assert sum(beginner_pairs_in(plan, beginner_ids) for plan in plans) == 0
 
 
+@pytest.mark.parametrize(
+    ("count", "courts", "beginners"),
+    [(12, 3, 3), (13, 3, 3), (16, 4, 3), (16, 4, 4)],
+)
+def test_beginners_are_not_paired_even_when_registered_last(count, courts, beginners):
+    """初心者が後から登録されても（= id が大きくても）同士ペアを作らない。
+
+    組み分けの探索は「まだ使っていない中で先頭の人」を起点に進むので、
+    制約の強い人が末尾に固まると、最後の組で避けようがなくなる。
+    3面以上でないと刈り込みが起きず、初心者を先頭に置いた構成では踏めない。
+    初心者は公募で後から入ることが多く、実運用ではこちらが普通。
+    """
+    members = make_members(count, beginners=beginners, beginners_last=True)
+    beginner_ids = {m.id for m in members if m.level is Level.BEGINNER}
+    sim = Simulator(members, seed=7700 + count, court_count=courts)
+    plans = sim.run(16)
+    offenders = sum(beginner_pairs_in(plan, beginner_ids) for plan in plans)
+    assert offenders == 0, f"初心者同士ペアが {offenders} 件できている"
+
+
 def test_beginner_pairs_face_each_other():
     """初心者2名が同時に出るときは、同じコートで対戦させる（優先度5）。
 
@@ -581,11 +657,30 @@ def test_beginner_pairs_face_each_other():
 
 
 def test_partnering_a_beginner_is_shared_evenly():
-    """初心者と組む回数を非初心者の間で均す（優先度4）。"""
+    """初心者と組む回数を非初心者の間で均す（優先度4）。
+
+    閾値は 1。許容を 2 にすると、均す機構（`beginner_spread`）を殺したときの
+    実測値とちょうど同じになり、仕様違反を検出できなくなる（下のテスト参照）。
+    """
     sim = Simulator(make_members(16, beginners=2), seed=1357)
     sim.run(24)
     counts = [sim.history.beginner_partners(i) for i in range(3, 17)]
-    assert max(counts) - min(counts) <= 2
+    assert max(counts) - min(counts) <= 1
+
+
+def test_the_beginner_burden_is_uneven_without_the_mechanism():
+    """上のテストの閾値が意味を持つことを、対照で確かめる。
+
+    `beginner_spread` を切ると受け持ち回数がばらつくことを示す。これが無いと
+    「閾値が緩すぎて何も検出していない」状態に気づけない。
+    """
+    weights = dataclasses.replace(Weights(), beginner_spread=0)
+    sim = Simulator(make_members(16, beginners=2), seed=1357, weights=weights)
+    sim.run(24)
+    counts = [sim.history.beginner_partners(i) for i in range(3, 17)]
+    assert max(counts) - min(counts) > 1, (
+        "機構を切ってもばらつかないなら、上の閾値は何も見張っていない"
+    )
 
 
 def test_rule_unaware_players_are_not_paired_together():
@@ -866,3 +961,106 @@ def test_widening_the_envelope_is_bounded_by_the_configured_slack():
     sim.run(24)
     counts = sim.play_counts()
     assert max(counts.values()) - min(counts.values()) <= 1 + 1
+
+
+# ---------------------------------------------------------------------------
+# 仕様の優先順位そのものを固定する
+#
+# 「結果として b-b が 0 件」といった観測だけだと、3b と 3c を入れ替えても
+# 誰も落ちない。順序は重み・コストの大小として直接おさえる。
+# ---------------------------------------------------------------------------
+
+
+def _pair_cost(level_a: Level, level_b: Level) -> int:
+    """2人だけのペアコスト。履歴は空なので、レベルの効果だけが出る。"""
+    a = player(1, level=level_a)
+    b = player(2, level=level_b)
+    stats = [a, b]
+    scorer = _make_scorer(stats, _make_state(stats))
+    return scorer._compute_pair_cost(a, b, tie_key(0, a.id) < tie_key(0, b.id) and (1, 2) or (2, 1))
+
+
+def test_rule_unaware_pair_costs_follow_the_spec_order():
+    """3a > 3b > 3c > 習得済み同士、の順に避ける（仕様 3a/3b/3c）。"""
+    beginner_pair = _pair_cost(Level.BEGINNER, Level.BEGINNER)
+    mixed_pair = _pair_cost(Level.BEGINNER, Level.RACKET_EXPERIENCED)
+    racket_pair = _pair_cost(Level.RACKET_EXPERIENCED, Level.RACKET_EXPERIENCED)
+    known_pair = _pair_cost(Level.PICKLEBALL, Level.PICKLEBALL)
+
+    assert beginner_pair > mixed_pair, "初心者同士がいちばん避けたい（3a）"
+    assert mixed_pair > racket_pair, "初心者 x ラケット経験者の方が重い（3b > 3c）"
+    assert racket_pair > known_pair, "ルールを覚えていない者同士は避ける（3c）"
+
+
+def test_gender_matchup_costs_follow_the_spec_order():
+    """6 / 6a / 6b / 6c の優先順位を、コストの大小で固定する。
+
+    「男女ペア同士がよい」「男子対女子は避ける」だけでなく、その間にある
+    6b（mm 対 mm / ff 対 ff がベストな調整）と 6c（mx 対 mm / mx 対 ff が次点）
+    の順序も含めて押さえる。
+    """
+    w = Weights()
+    mm, ff, mx = PairKind.MM, PairKind.FF, PairKind.MX
+
+    assert gender_cost(mx, mx, w) == 0, "男女ペア同士が最良（6）"
+    assert gender_cost(mx, mx, w) < gender_cost(mm, mm, w)
+    assert gender_cost(mm, mm, w) == gender_cost(ff, ff, w), "6b は男女で対称"
+    assert gender_cost(mm, mm, w) < gender_cost(mm, mx, w), "6b が 6c より良い"
+    assert gender_cost(mm, mx, w) == gender_cost(ff, mx, w), "6c は男女で対称"
+    assert gender_cost(mm, mx, w) < gender_cost(mm, ff, w), "6a が最も避けたい"
+
+
+def test_a_returning_member_wins_a_tie_against_equals():
+    """出場回数が並んだら、休み明けを先に入れる（優先度7）。
+
+    公平性の枠が先に効くので、出場回数に差があるうちは重みを切っても
+    休み明けが選ばれる。重み `just_returned` が実際に効くのは、
+    条件が並んだときにどちらを採るかという場面だけ。そこを直接見る。
+    """
+    others = [player(i, plays=1) for i in range(1, 5)]
+    returning = player(5, plays=1, just_returned=True)
+    players = [*others, returning]
+
+    def benched(weights: Weights) -> int:
+        """休み明けが外された回数。"""
+        count = 0
+        for seed in range(20):
+            plan = generate_round(
+                players,
+                History(),
+                court_count=1,
+                seed=seed,
+                rng=make_rng(seed, 1, 0),
+                weights=weights,
+            )
+            if returning.id not in plan.playing:
+                count += 1
+        return count
+
+    assert benched(Weights()) == 0, "並んだら休み明けを必ず入れる"
+    assert benched(dataclasses.replace(Weights(), just_returned=0)) > 0, (
+        "重みを切れば外れることがある（＝この重みが優先度7を担っている）"
+    )
+
+
+def test_a_beginner_pair_can_face_a_female_pair():
+    """初心者を含むペアは性別を無視する（仕様 6d）。
+
+    6a「男子ペア対女子ペア」は実質ハード制約だが、初心者を含むペアには
+    かからない。単体の `_pair_kind` だけでなく、実際に生成できることを見る。
+    """
+    members = make_members(8, males=4, beginners=2)
+    sim = Simulator(members, seed=2468)
+    plans = sim.run(12)
+
+    beginners = {m.id for m in sim.specs.values() if m.level is Level.BEGINNER}
+    saw_beginner_pair = False
+    for plan in plans:
+        for match in plan.matches:
+            for team in (match.team_a, match.team_b):
+                if set(team) & beginners:
+                    saw_beginner_pair = True
+    assert saw_beginner_pair, "テストの前提: 初心者が出場している"
+
+    # 6a に阻まれて生成不能になっていないこと（初心者ペアが毎回できている）
+    assert len(plans) == 12

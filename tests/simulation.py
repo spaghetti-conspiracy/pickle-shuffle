@@ -42,15 +42,22 @@ def make_members(
     beginners: int = 0,
     racket: int = 0,
     start_id: int = 1,
+    beginners_last: bool = False,
 ) -> list[MemberSpec]:
     """テスト用のメンバー一覧を作る。
 
     Args:
         count: 人数。
         males: 男性の人数。``None`` なら男女交互。
-        beginners: 先頭から何人を初心者にするか。
+        beginners: 何人を初心者にするか。
         racket: 初心者に続けて何人をラケット経験者（ルール習得中）にするか。
         start_id: id の開始値。
+        beginners_last: 初心者を末尾（id の大きい方）に置く。
+
+            初心者は公募で後から登録されることが多く、実際には id が大きく
+            なりやすい。組み分けの探索は id 順を起点にしていた時期があり、
+            初心者が末尾にいると最後の組に固まって初心者同士ペアができた。
+            先頭に置いた構成だけでは、この欠陥を踏めない。
     """
     members: list[MemberSpec] = []
     for i in range(count):
@@ -58,9 +65,11 @@ def make_members(
             gender = Gender.MALE if i % 2 == 0 else Gender.FEMALE
         else:
             gender = Gender.MALE if i < males else Gender.FEMALE
-        if i < beginners:
+        # beginners_last なら末尾から数える。
+        special = count - 1 - i if beginners_last else i
+        if special < beginners:
             level = Level.BEGINNER
-        elif i < beginners + racket:
+        elif special < beginners + racket:
             level = Level.RACKET_EXPERIENCED
         else:
             level = Level.PICKLEBALL

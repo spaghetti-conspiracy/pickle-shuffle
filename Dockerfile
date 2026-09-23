@@ -8,7 +8,7 @@ WORKDIR /app
 # 依存だけ先に入れてレイヤキャッシュを効かせる
 COPY pyproject.toml README.md ./
 COPY app ./app
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[postgres]"
 
 # SQLite の置き場。compose でホストにマウントする。
 RUN mkdir -p /app/data && useradd --create-home --uid 1000 appuser \

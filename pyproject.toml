@@ -13,6 +13,10 @@ dependencies = [
 [project.optional-dependencies]
 # 別の DB に差し替えるとき: pip install -e ".[postgres]"
 postgres = ["psycopg[binary]>=3.1"]
+
+# 開発用は extras ではなく依存グループに置く。extras だと `uv sync` が
+# 既定で入れないので、CLAUDE.md の手順どおりに進めてもテストが動かない。
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "httpx2>=2.13",

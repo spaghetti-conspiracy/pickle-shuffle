@@ -142,7 +142,10 @@ def test_round_tree_cascade_within_session(db):
     db.add_all(
         [
             RoundParticipation(
-                round_id=rnd.id, member_id=m.id, state=ParticipationState.PLAYED
+                round_id=rnd.id,
+                member_id=m.id,
+                state=ParticipationState.PLAYED,
+                level=m.level,
             )
             for m in members
         ]
@@ -169,7 +172,11 @@ def test_deleting_session_removes_everything_under_it(db):
     rnd = Round(session_id=s.id)
     db.add(rnd)
     db.commit()
-    db.add(RoundParticipation(round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT))
+    db.add(
+        RoundParticipation(
+            round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT, level=m.level
+        )
+    )
     db.commit()
 
     db.delete(s)
@@ -225,9 +232,17 @@ def test_participation_is_unique_per_round_and_member(db):
     rnd = Round(session_id=s.id)
     db.add(rnd)
     db.commit()
-    db.add(RoundParticipation(round_id=rnd.id, member_id=m.id, state=ParticipationState.PLAYED))
+    db.add(
+        RoundParticipation(
+            round_id=rnd.id, member_id=m.id, state=ParticipationState.PLAYED, level=m.level
+        )
+    )
     db.commit()
-    db.add(RoundParticipation(round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT))
+    db.add(
+        RoundParticipation(
+            round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT, level=m.level
+        )
+    )
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()

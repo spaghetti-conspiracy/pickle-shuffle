@@ -161,6 +161,13 @@ class Member(Base):
     """途中参加者の下駄。登録時点の active メンバーの最小 adjusted。"""
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    """最後に属性や状態を変えた時刻。
+
+    生成済みのマッチより後に変わったかどうかを見て、表示画面で注意を出すのに使う。
+    """
 
     session: Mapped[PracticeSession] = relationship(back_populates="members")
 
@@ -245,6 +252,13 @@ class RoundParticipation(Base):
     round_id: Mapped[int] = mapped_column(ForeignKey("rounds.id", ondelete="CASCADE"), index=True)
     member_id: Mapped[int] = mapped_column(ForeignKey("members.id", ondelete="CASCADE"), index=True)
     state: Mapped[ParticipationState] = mapped_column(_enum_column(ParticipationState))
+    level: Mapped[Level] = mapped_column(_enum_column(Level))
+    """そのラウンド時点のレベル。
+
+    途中でレベルを変えても過去の履歴が書き換わらないように記録する。
+    現在のレベルで過去を解釈すると、「初心者と組んだ回数」が消えたり
+    遡って計上されたりして、負担の均しが狂う。
+    """
 
     round: Mapped[Round] = relationship(back_populates="participations")
 

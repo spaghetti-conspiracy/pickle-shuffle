@@ -136,8 +136,21 @@ Project Settings → General と Team Settings から読める。
 cat .vercel/project.json   # orgId と projectId
 ```
 
-トークンは Vercel の Account Settings → Tokens で発行する（Scope はこの
-プロジェクトを含むチーム）。
+トークンは**アカウントの設定**から発行する（プロジェクトの設定ではない）。
+
+1. <https://vercel.com/account/tokens> を開く
+   （アバター → **Settings** → **Tokens** でも同じ）
+2. **Create Token**
+3. 入力するのは3つ
+   - **Token Name**: `github-actions-pickle-shuffle` など、用途が分かる名前
+   - **Scope**: **このプロジェクトを持つアカウント／チームを選ぶ。**
+     ここを間違えると、デプロイのときに 403 になる
+   - **Expiration**: 期限。切れるとデプロイが止まるので、付けるなら控えておく
+4. **Create**。**値はこの1回しか表示されない**
+
+`vercel login` 済みなら手元の `~/.local/share/com.vercel.cli/auth.json`
+（環境により `~/.vercel/auth.json`）にもトークンがあるが、**CI 用は別に
+発行する**。漏れたときに、そちらだけ失効させれば済む。
 
 `.vercel/` は `.gitignore` に入っているのでコミットされない。
 

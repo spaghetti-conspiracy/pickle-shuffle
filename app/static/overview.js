@@ -135,7 +135,17 @@ function render(data) {
   renderMemberUrl(data.member_url);
 }
 
-function setOffline(message) {
+/** 画面の下部に出す短い知らせ。
+ *
+ * 通信の失敗と、操作が断られた理由（人数不足など）を同じ枠で出す。
+ * ただし消えるタイミングが違う。通信の失敗は繋がれば消してよいが、
+ * 操作の理由は「押しても何も起きなかった」の答えなので、次に操作が
+ * 通るまで残す。ポーリングが成功したくらいで消してはいけない。
+ */
+let noticeIsFromAction = false;
+
+function setNotice(message, fromAction = false) {
+  noticeIsFromAction = Boolean(message) && fromAction;
   const element = $("offline");
   element.textContent = message;
   element.classList.toggle("hidden", !message);
@@ -149,7 +159,7 @@ async function poll() {
     // 待っている間に利用者が操作していたら、この応答はもう古い。
     // 描くと、押した直後に前のマッチへ巻き戻って見える。
     if (gate.isStale(token)) return;
-    setOffline("");
+    if (!noticeIsFromAction) setNotice("");
     // 描き直すべきときだけ描き直す。revision は表示すべき中身の指紋。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
@@ -160,7 +170,7 @@ async function poll() {
       showGone();
     } else {
       // 一時的な通信の失敗。次のポーリングで復帰する見込みなので画面は残す。
-      setOffline(`通信できません（${error.message}）`);
+      setNotice(`通信できません（${error.message}）`);
     }
   } finally {
     document.body.dataset.ready = "1";
@@ -183,7 +193,7 @@ async function act(run) {
   try {
     const data = await run();
     gate.bump();
-    setOffline("");
+    setNotice("");
     lastRevision = data.revision;
     render(data);
   } catch (error) {
@@ -194,7 +204,7 @@ async function act(run) {
       // 人数不足（409）もここに来る。黙って捨てると、押しても何も起きない
       // 画面になる。練習会の開始直後はまだ4人揃っていないのが普通なので、
       // いちばん必要な場面でいちばん必要な説明が消えてしまう。
-      setOffline(error.message);
+      setNotice(error.message, true);
     }
   } finally {
     busy = false;

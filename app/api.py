@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections import Counter
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Annotated
 
 import segno
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, Cookie, Depends, Request, Response
 from sqlalchemy.orm import Session
 
-from app import tennisbear
+from app import auth, tennisbear
 from app.config import IS_SERVERLESS, settings
 from app.db import get_db
-from app.errors import ConflictError, ValidationError
-from app.models import Member, PracticeSession, Round, TimerState
+from app.errors import ConflictError, UnauthorizedError, ValidationError
+from app.external import SOURCE_TENNISBEAR, external_key, raw_id_of, source_of
+from app.models import Member, Owner, Person, PracticeSession, Round, TimerState
 from app.scheduler.domain import MemberStatus, RoundStatus
 from app.scheduler.generator import PLAYERS_PER_MATCH
 from app.schemas import (
@@ -27,11 +28,14 @@ from app.schemas import (
     CurrentOut,
     ImportRequest,
     ImportResultOut,
+    LoginRequest,
     MatchOut,
     MemberCreate,
     MemberOut,
-    MemberProfileOut,
     MemberUpdate,
+    PersonCreate,
+    PersonOut,
+    PersonUpdate,
     PlayerOut,
     SessionCreate,
     SessionOut,
@@ -39,6 +43,8 @@ from app.schemas import (
     StatsOut,
     TimerOut,
 )
+from app.services import owners as owners_service
+from app.services import people as people_service
 from app.services import rounds as rounds_service
 from app.services import sessions as sessions_service
 from app.services import stats as stats_service
@@ -65,6 +71,52 @@ def health() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# 合言葉
+#
+# **いたずら防止であって、秘密を守る仕組みではない。** 練習会のトークンを
+# 持っていれば通る画面（管理・全体表示・メンバー）は今までどおり素通しにする。
+# QR を読んだメンバーに合言葉を聞くわけにいかないため。門をかけるのは
+# 「トークンを持っていなくても叩ける」入口、つまり練習会の一覧・作成と台帳。
+# ---------------------------------------------------------------------------
+
+
+def require_admin(
+    db: DbSession, pickle_admin: Annotated[str | None, Cookie()] = None
+) -> Owner:
+    """合言葉を通しているか見て、いま見ている団体を返す。"""
+    admin_id = auth.read_cookie(pickle_admin)
+    admin = owners_service.get_admin(db, admin_id) if admin_id is not None else None
+    if admin is None or not auth.cookie_matches(
+        pickle_admin or "", admin.id, admin.password_hash
+    ):
+        raise UnauthorizedError("合言葉を入力してください")
+    return owners_service.current_owner(db, admin)
+
+
+CurrentOwner = Annotated[Owner, Depends(require_admin)]
+"""合言葉を通した管理者が見ている団体。"""
+
+
+@router.post("/login", status_code=204)
+def login(payload: LoginRequest, response: Response, db: DbSession) -> None:
+    """合言葉を確かめ、通ったことをクッキーに残す。"""
+    admin = owners_service.authenticate(db, payload.password)
+    response.set_cookie(
+        auth.COOKIE_NAME,
+        auth.issue_cookie(admin.id, admin.password_hash),
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+        path="/",
+    )
+
+
+@router.post("/logout", status_code=204)
+def logout(response: Response) -> None:
+    response.delete_cookie(auth.COOKIE_NAME, path="/")
+
+
+# ---------------------------------------------------------------------------
 # 練習会
 # ---------------------------------------------------------------------------
 
@@ -75,20 +127,25 @@ def _session_out(session: PracticeSession) -> SessionOut:
         name=session.name,
         created_at=session.created_at,
         highlight_beginners=session.highlight_beginners,
-        tennisbear_event_id=session.tennisbear_event_id,
+        tennisbear_event_id=raw_id_of(session.external_event_id),
+        import_source=source_of(session.external_event_id),
         timer_minutes=session.timer_minutes,
         courts=[CourtOut.model_validate(c) for c in session.courts],
     )
 
 
 @router.get("/sessions", response_model=list[SessionOut])
-def list_sessions(db: DbSession) -> list[SessionOut]:
-    return [_session_out(s) for s in sessions_service.list_sessions(db)]
+def list_sessions(db: DbSession, owner: CurrentOwner) -> list[SessionOut]:
+    return [_session_out(s) for s in sessions_service.list_sessions(db, owner)]
 
 
 @router.post("/sessions", response_model=SessionOut, status_code=201)
-def create_session(payload: SessionCreate, db: DbSession) -> SessionOut:
-    session = sessions_service.create_session(db, payload.name, payload.court_count)
+def create_session(
+    payload: SessionCreate, db: DbSession, owner: CurrentOwner
+) -> SessionOut:
+    session = sessions_service.create_session(
+        db, owner, payload.name, payload.court_count
+    )
     return _session_out(session)
 
 
@@ -162,14 +219,24 @@ def list_members(session_token: str, db: DbSession) -> list[MemberOut]:
 def add_member(
     session_token: str, payload: MemberCreate, db: DbSession
 ) -> MemberOut:
+    """参加者を足す。台帳から選ぶか、その場で登録するか。
+
+    その場で登録した人は台帳にも入る。打ち込んだ名前が台帳の誰かと同じでも、
+    選んだのではないので別人として扱う（同名は番号で見分ける・不変則14）。
+    """
     session = sessions_service.get_session(db, session_token)
-    member = sessions_service.add_member(
-        db,
-        session,
-        nickname=payload.nickname,
-        gender=payload.gender,
-        level=payload.level,
-    )
+    owner = sessions_service.owner_of(db, session)
+    if payload.person_id is not None:
+        person = people_service.get_person(db, owner, payload.person_id)
+    else:
+        person = people_service.add_person(
+            db,
+            owner,
+            nickname=payload.nickname,
+            gender=payload.gender,
+            level=payload.level,
+        )
+    member = sessions_service.add_member(db, session, person)
     return _member_out(member, {})
 
 
@@ -181,13 +248,16 @@ def import_members(
 ) -> ImportResultOut:
     """tennisbear のイベントから参加者を取り込む。
 
-    何度でも実行してよい。すでにいる人は tennisbear の ID で見分けて、
-    属性はこちらの DB を優先する（管理者が直した内容を戻さない）。
+    何度でも実行してよい。すでに台帳にいる人は ID で見分けて、**何も書き換えない**。
+    向こうと繋がっているのはユーザ ID だけで、名前や属性はこちらで管理する。
     """
     session = sessions_service.get_session(db, session_token)
+    owner = sessions_service.owner_of(db, session)
     # 取りに行く前に弾く。別のイベントだと分かっているのに外へ出ても無駄で、
     # そのIDが実在しなければ「見つかりません」が先に返って理由がぼやける。
-    sessions_service.check_event(session, payload.event_id)
+    sessions_service.check_event(
+        session, external_key(SOURCE_TENNISBEAR, payload.event_id)
+    )
     html = tennisbear.fetch_event_page(
         payload.event_id,
         base_url=settings.tennisbear_base_url,
@@ -195,11 +265,10 @@ def import_members(
     )
     participants = tennisbear.parse_event_page(html)
     result = sessions_service.import_participants(
-        db, session, participants, event_id=payload.event_id
+        db, owner, session, participants, event_id=payload.event_id
     )
     return ImportResultOut(
         added=result.added,
-        renamed=result.renamed,
         unchanged=result.unchanged,
         resting=result.resting,
     )
@@ -252,15 +321,83 @@ def remove_member(member_id: int, db: DbSession) -> None:
     sessions_service.remove_member(db, sessions_service.get_member(db, member_id))
 
 
-@router.get("/member-profiles", response_model=list[MemberProfileOut])
-def list_profiles(db: DbSession) -> list[MemberProfileOut]:
-    """過去に登録した名前と属性。登録画面の入力補完に使う。"""
-    return [MemberProfileOut.model_validate(p) for p in sessions_service.list_profiles(db)]
+# ---------------------------------------------------------------------------
+# メンバー台帳
+#
+# 練習会には属さない「人」の一覧。ここでの削除は本当に消すが、練習会の
+# 参加者と過去の記録には触らない（進行中の練習会が壊れないように）。
+# **取り込みの導線はここには置かない。** 実際のイベントに紐づくときしか
+# 外部から引かない、という歯止めのため。
+# ---------------------------------------------------------------------------
 
 
-@router.delete("/member-profiles/{nickname}", status_code=204)
-def delete_profile(nickname: str, db: DbSession) -> None:
-    sessions_service.delete_profile(db, nickname)
+def _person_out(person: Person, *, duplicate: bool, sessions: int) -> PersonOut:
+    return PersonOut(
+        id=person.id,
+        nickname=person.nickname,
+        gender=person.gender,
+        level=person.level,
+        source=people_service.source_label(person),
+        duplicate=duplicate,
+        sessions=sessions,
+    )
+
+
+def _people_out(db: Session, owner: Owner) -> list[PersonOut]:
+    people = people_service.list_people(db, owner)
+    counts = Counter(person.nickname for person in people)
+    joined = people_service.session_counts(db, owner)
+    return [
+        _person_out(
+            person,
+            duplicate=counts[person.nickname] > 1,
+            sessions=joined.get(person.id, 0),
+        )
+        for person in people
+    ]
+
+
+@router.get("/people", response_model=list[PersonOut])
+def list_people(db: DbSession, owner: CurrentOwner) -> list[PersonOut]:
+    return _people_out(db, owner)
+
+
+@router.post("/people", response_model=PersonOut, status_code=201)
+def add_person(
+    payload: PersonCreate, db: DbSession, owner: CurrentOwner
+) -> PersonOut:
+    person = people_service.add_person(
+        db,
+        owner,
+        nickname=payload.nickname,
+        gender=payload.gender,
+        level=payload.level,
+    )
+    return _person_out(person, duplicate=False, sessions=0)
+
+
+@router.patch("/people/{person_id}", response_model=PersonOut)
+def update_person(
+    person_id: int, payload: PersonUpdate, db: DbSession, owner: CurrentOwner
+) -> PersonOut:
+    """台帳を直す。その人が入っている練習会の参加者にも反映される。"""
+    person = people_service.get_person(db, owner, person_id)
+    people_service.update_person(
+        db,
+        owner,
+        person,
+        nickname=payload.nickname,
+        gender=payload.gender,
+        level=payload.level,
+    )
+    joined = people_service.session_counts(db, owner)
+    return _person_out(person, duplicate=False, sessions=joined.get(person.id, 0))
+
+
+@router.delete("/people/{person_id}", status_code=204)
+def delete_person(person_id: int, db: DbSession, owner: CurrentOwner) -> None:
+    """台帳から消す。練習会の参加者と過去の記録はそのまま残る。"""
+    people_service.delete_person(db, owner, people_service.get_person(db, owner, person_id))
 
 
 # ---------------------------------------------------------------------------

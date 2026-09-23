@@ -11,7 +11,8 @@ from app.models import (
     Match,
     MatchSlot,
     Member,
-    MemberProfile,
+    Owner,
+    Person,
     PracticeSession,
     Round,
     RoundParticipation,
@@ -25,8 +26,13 @@ from app.scheduler.domain import (
 )
 
 
+def _owner(db) -> Owner:
+    """既定の団体。すべてのデータはここに紐づく。"""
+    return db.scalars(select(Owner).order_by(Owner.id)).first()
+
+
 def _make_session(db, name: str = "練習会", court_count: int = 2) -> PracticeSession:
-    s = PracticeSession(name=name)
+    s = PracticeSession(owner_id=_owner(db).id, name=name)
     db.add(s)
     db.flush()
     db.add_all(
@@ -188,24 +194,78 @@ def test_deleting_session_removes_everything_under_it(db):
     assert db.scalars(select(RoundParticipation)).all() == []
 
 
-def test_member_profiles_survive_session_deletion(db):
-    """属性の辞書は練習会に属さないので、記録を破棄しても残る。"""
+def test_people_survive_session_deletion(db):
+    """メンバー台帳は練習会に属さないので、記録を破棄しても残る。"""
     s = _make_session(db)
-    db.add(MemberProfile(nickname="たろう", gender=Gender.MALE, level=Level.PICKLEBALL))
+    db.add(
+        Person(
+            owner_id=_owner(db).id,
+            nickname="たろう",
+            gender=Gender.MALE,
+            level=Level.PICKLEBALL,
+        )
+    )
     db.commit()
 
     db.delete(s)
     db.commit()
 
-    profile = db.scalars(select(MemberProfile)).one()
-    assert profile.nickname == "たろう"
-    assert profile.gender is Gender.MALE
+    person = db.scalars(select(Person)).one()
+    assert person.nickname == "たろう"
+    assert person.gender is Gender.MALE
 
 
-def test_member_profile_nickname_is_unique(db):
-    db.add(MemberProfile(nickname="かぶり", gender=Gender.MALE, level=Level.PICKLEBALL))
+def test_people_may_share_a_nickname(db):
+    """台帳のニックネームは一意にしない。
+
+    ニックネームは識別子ではない（不変則14）。見分けるための番号は
+    サービス層が振る。DB で縛ると、同名の人を登録できなくなってしまう。
+    """
+    owner = _owner(db)
+    for gender in (Gender.MALE, Gender.FEMALE):
+        db.add(
+            Person(
+                owner_id=owner.id,
+                nickname="かぶり",
+                gender=gender,
+                level=Level.PICKLEBALL,
+            )
+        )
     db.commit()
-    db.add(MemberProfile(nickname="かぶり", gender=Gender.FEMALE, level=Level.BEGINNER))
+    assert len(db.scalars(select(Person)).all()) == 2
+
+
+def test_the_import_key_is_unique_within_an_owner(db):
+    """取り込み元の識別子は団体の中で一意。
+
+    同じ人を二重に取り込むと、毎ラウンド出場枠を1つ食う幽霊ができる。
+    団体をまたいだ重複は縛らない（別の団体が同じ人を持つのは当然）。
+    """
+    owner = _owner(db)
+    other = Owner(name="よその団体")
+    db.add(other)
+    db.flush()
+    for holder in (owner, other):
+        db.add(
+            Person(
+                owner_id=holder.id,
+                nickname="同じ人",
+                gender=Gender.MALE,
+                level=Level.PICKLEBALL,
+                external_id="bear:9001",
+            )
+        )
+    db.commit()
+
+    db.add(
+        Person(
+            owner_id=owner.id,
+            nickname="二重",
+            gender=Gender.MALE,
+            level=Level.PICKLEBALL,
+            external_id="bear:9001",
+        )
+    )
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()

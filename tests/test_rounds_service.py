@@ -7,21 +7,25 @@ import pytest
 from app.errors import ConflictError, NotEnoughPlayersError
 from app.models import Round
 from app.scheduler.domain import Gender, Level, MemberStatus, RoundStatus
+from app.services import people as people_service
 from app.services import rounds as rounds_service
 from app.services import sessions as sessions_service
 from app.services import stats as stats_service
+from app.services.owners import current_owner
 
 
-def make_session(db, count: int = 13, court_count: int = 2):
-    session = sessions_service.create_session(db, "練習会", court_count)
+def make_session(db, count: int = 13, court_count: int = 2, *, name: str = "練習会"):
+    owner = current_owner(db)
+    session = sessions_service.create_session(db, owner, name, court_count)
     for i in range(count):
-        sessions_service.add_member(
+        person = people_service.add_person(
             db,
-            session,
+            owner,
             nickname=f"m{i + 1}",
             gender=Gender.MALE if i % 2 == 0 else Gender.FEMALE,
             level=Level.PICKLEBALL,
         )
+        sessions_service.add_member(db, session, person)
     db.refresh(session)
     return session
 
@@ -134,7 +138,15 @@ def test_a_late_joiner_gets_a_baseline(db):
         if p.status is MemberStatus.ACTIVE
     )
     late = sessions_service.add_member(
-        db, session, nickname="遅刻", gender=Gender.FEMALE, level=Level.PICKLEBALL
+        db,
+        session,
+        people_service.add_person(
+            db,
+            current_owner(db),
+            nickname="遅刻",
+            gender=Gender.FEMALE,
+            level=Level.PICKLEBALL,
+        ),
     )
     assert late.baseline == established
 
@@ -217,14 +229,19 @@ def test_not_enough_players_for_even_one_court(db):
 
 def _beginner_session(db, beginners: int = 1, count: int = 8):
     """全員ピックルボール経験者のうち、先頭の何人かを初心者にした練習会。"""
-    session = sessions_service.create_session(db, "レベル変更", 2)
+    owner = current_owner(db)
+    session = sessions_service.create_session(db, owner, "レベル変更", 2)
     members = [
         sessions_service.add_member(
             db,
             session,
-            nickname=f"m{i + 1}",
-            gender=Gender.MALE if i % 2 == 0 else Gender.FEMALE,
-            level=Level.BEGINNER if i < beginners else Level.PICKLEBALL,
+            people_service.add_person(
+                db,
+                owner,
+                nickname=f"m{i + 1}",
+                gender=Gender.MALE if i % 2 == 0 else Gender.FEMALE,
+                level=Level.BEGINNER if i < beginners else Level.PICKLEBALL,
+            ),
         )
         for i in range(count)
     ]

@@ -57,3 +57,14 @@ class NotEnoughPlayersError(AppError):
 
     status_code = 409
     code = "not_enough_players"
+
+
+class UnauthorizedError(AppError):
+    """合言葉が要る操作を、合言葉なしで呼んだ。
+
+    いたずら防止の門であって、秘密を守る仕組みではない。画面側はこれを
+    受けたらパスワード欄を出す。
+    """
+
+    status_code = 401
+    code = "unauthorized"

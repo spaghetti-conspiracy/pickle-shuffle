@@ -9,6 +9,7 @@ from app.scheduler.domain import Weights
 
 DEFAULT_DATABASE_URL = "sqlite:///./data/app.db"
 DEFAULT_TENNISBEAR_URL = "https://www.tennisbear.net"
+DEFAULT_ADMIN_PASSWORD = "pickle"
 
 IS_SERVERLESS = bool(os.environ.get("VERCEL"))
 """Vercel などのサーバーレス環境で動いているか。
@@ -36,6 +37,13 @@ class Settings:
 
     tennisbear_timeout: float = 10.0
     """取り込みの待ち時間。待たせすぎるより、やり直してもらう方がよい。"""
+
+    admin_password: str = DEFAULT_ADMIN_PASSWORD
+    """管理者の固定パスワード。**いたずら防止であって、秘密を守る仕組みではない。**
+
+    起動のたびにこの値から管理者のハッシュを作り直すので、変えるのに
+    DB を作り直す必要はない。既定のまま公開ネットワークに出さないこと。
+    """
 
     weights: Weights = field(default_factory=Weights)
     # 公平性の枠をどこまで緩めてよいか（試合数の差の上限）。既定の 0 は厳密公平。
@@ -68,6 +76,7 @@ def load_settings() -> Settings:
             os.environ.get("TENNISBEAR_BASE_URL") or DEFAULT_TENNISBEAR_URL
         ).strip().rstrip("/"),
         tennisbear_timeout=_env_int("TENNISBEAR_TIMEOUT", 10),
+        admin_password=os.environ.get("ADMIN_PASSWORD") or DEFAULT_ADMIN_PASSWORD,
         fairness_slack=_env_int("FAIRNESS_SLACK", 0),
         lookahead=_env_int("LOOKAHEAD", 1),
         beam=_env_int("BEAM", 16),

@@ -428,6 +428,7 @@ def test_the_internal_id_is_not_exposed(client):
         "courts",
         "highlight_beginners",
         "tennisbear_event_id",
+        "import_source",
         "timer_minutes",
     }
 
@@ -484,14 +485,29 @@ def test_member_qr_for_a_missing_session(client):
 
 
 def test_attributes_are_reused_across_sessions(client):
-    """ニックネームをキーに属性を引き当てる。統計は共有しない。"""
+    """その場で登録した人は台帳にも入り、次の練習会でも同じ属性で使える。
+
+    統計は共有しない（不変則13）。共有するのは属性だけ。
+    """
     morning = create_session(client, "午前")
     client.post(
         f"/api/sessions/{morning['token']}/members",
         json={"nickname": "たろう", "gender": "male", "level": "beginner"},
     )
-    profiles = client.get("/api/member-profiles").json()
-    assert {"nickname": "たろう", "gender": "male", "level": "beginner"} in profiles
+    people = client.get("/api/people").json()
+    person = next(p for p in people if p["nickname"] == "たろう")
+    assert (person["gender"], person["level"]) == ("male", "beginner")
+
+    afternoon = create_session(client, "午後")
+    added = client.post(
+        f"/api/sessions/{afternoon['token']}/members",
+        json={"person_id": person["id"]},
+    ).json()
+    assert (added["nickname"], added["gender"], added["level"]) == (
+        "たろう",
+        "male",
+        "beginner",
+    )
 
 
 def test_statistics_are_never_shared_between_sessions(client):
@@ -511,21 +527,26 @@ def test_statistics_are_never_shared_between_sessions(client):
     assert stats["play_counts"] == {}
 
 
-def test_the_dictionary_is_updated_last_write_wins(client):
+def test_the_same_name_makes_a_second_person(client):
+    """同じ名前で2回登録したら、台帳には2人できて番号で見分ける。
+
+    台帳はニックネームではなく id で引く。同名は禁止しないが、選ぶときに
+    どちらか分からないと困るので番号を振る（**ユーザー承認済み**）。
+    属性は人ごとに持つので、後から登録した人が前の人を上書きしない。
+    """
     session = create_session(client)
-    client.post(
-        f"/api/sessions/{session['token']}/members",
-        json={"nickname": "はな", "gender": "female", "level": "beginner"},
-    )
-    client.post(
-        f"/api/sessions/{session['token']}/members",
-        json={"nickname": "はな", "gender": "female", "level": "pickleball"},
-    )
-    profiles = {p["nickname"]: p for p in client.get("/api/member-profiles").json()}
-    assert profiles["はな"]["level"] == "pickleball"
+    for level in ("beginner", "pickleball"):
+        client.post(
+            f"/api/sessions/{session['token']}/members",
+            json={"nickname": "はな", "gender": "female", "level": level},
+        )
+    people = [p for p in client.get("/api/people").json() if p["nickname"].startswith("はな")]
+    assert [p["nickname"] for p in people] == ["はな", "はな2"]
+    assert [p["level"] for p in people] == ["beginner", "pickleball"]
+    assert len({p["id"] for p in people}) == 2, "別人として持つ"
 
 
-def test_the_dictionary_survives_deleting_a_session(client):
+def test_the_register_survives_deleting_a_session(client):
     session = create_session(client)
     client.post(
         f"/api/sessions/{session['token']}/members",
@@ -533,20 +554,29 @@ def test_the_dictionary_survives_deleting_a_session(client):
     )
     assert client.delete(f"/api/sessions/{session['token']}").status_code == 204
     assert client.get(f"/api/sessions/{session['token']}").status_code == 404
-    assert any(p["nickname"] == "のこる" for p in client.get("/api/member-profiles").json())
+    assert any(p["nickname"] == "のこる" for p in client.get("/api/people").json())
 
 
 def test_duplicate_nicknames_are_allowed_but_reported(client):
-    """同名は禁止しない。どちらか分からなくなるので警告だけ出す。"""
+    """同名は禁止しない。番号で見分けられるようにし、被ったままなら警告する。
+
+    ふだんは台帳が番号を振るので被らない。手で同じ名前に直したときだけ、
+    どちらか分からなくなるので警告を出す（不変則14: 禁止はしない）。
+    """
     session = create_session(client)
     for _ in range(2):
         client.post(
             f"/api/sessions/{session['token']}/members",
             json={"nickname": "ゆうき", "gender": "male", "level": "pickleball"},
         )
-    add_members(client, session["token"], 6)
+    members = client.get(f"/api/sessions/{session['token']}/members").json()
+    assert [m["nickname"] for m in members] == ["ゆうき", "ゆうき2"]
 
-    current = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
+    # 手で同じ名前に戻したら、読み上げる側が困るので警告する。
+    client.patch(f"/api/members/{members[1]['id']}", json={"nickname": "ゆうき"})
+    add_members(client, session["token"], 6)
+    client.post(f"/api/sessions/{session['token']}/rounds/generate")
+    current = client.get(f"/api/sessions/{session['token']}/current").json()
     assert current["duplicate_nicknames"] == ["ゆうき"]
 
 

@@ -8,6 +8,7 @@ import {
   $,
   api,
   currentSessionToken,
+  forgetSessionToken,
   GENDER_LABELS,
   LEVEL_LABELS,
   rememberSessionToken,
@@ -298,6 +299,8 @@ $("finish-session").addEventListener("click", async () => {
   if (!confirm(`「${name}」を終了します。記録は破棄されます。よろしいですか？`)) return;
   try {
     await api.del(`/api/sessions/${sessionToken}`);
+    // 覚えたままだと、次に URL 無しで開いたとき消えた練習会を掴む。
+    forgetSessionToken();
     location.href = "/";
   } catch (error) {
     showError(error.message);

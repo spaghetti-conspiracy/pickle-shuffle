@@ -63,6 +63,19 @@ export function rememberSessionToken(token) {
   }
 }
 
+/** 覚えている練習会を忘れる。終了したときに呼ぶ。
+ *
+ * 残したままだと、URL を付けずに全体画面やメンバー画面を開いたときに
+ * 消えた練習会を掴んで「終了しました」と出てしまう。
+ */
+export function forgetSessionToken() {
+  try {
+    localStorage.removeItem("pickle.session");
+  } catch {
+    // 消せなくても、次に選んだ時点で上書きされる。
+  }
+}
+
 /** 画面が見えている間だけ、定期的に ``run`` を呼ぶ。
  *
  * メンバーがスマートフォンをポケットに入れている間もポーリングを続けると、

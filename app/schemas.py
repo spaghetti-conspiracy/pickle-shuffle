@@ -51,6 +51,9 @@ class SessionOut(BaseModel):
     highlight_beginners: bool
     """表示画面で初心者の名前を緑にするか。アルゴリズムの確認用。"""
 
+    tennisbear_event_id: int | None
+    """取り込み元のイベント。一度取り込んだら以後はここに固定する。"""
+
     courts: list[CourtOut]
 
 

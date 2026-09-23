@@ -28,6 +28,18 @@ async function loadSession() {
   document.title = `${session.name} — 練習会の管理`;
   $("session-name").textContent = session.name;
   $("highlight-beginners").checked = session.highlight_beginners;
+  // 一度取り込んだら、その練習会はそのイベントに紐づく。打ち間違えると
+  // 居ない人が一斉に休憩へ回るので、変えられないようにしておく。
+  const event = $("import-event");
+  if (session.tennisbear_event_id !== null) {
+    event.value = String(session.tennisbear_event_id);
+    event.readOnly = true;
+    $("import-note").textContent =
+      "この練習会はこのイベントから取り込んでいます。押すと最新の参加者を取り込みます。";
+  } else {
+    event.readOnly = false;
+    $("import-note").textContent = "";
+  }
   return session;
 }
 
@@ -284,7 +296,7 @@ $("import-members").addEventListener("click", async () => {
     }
     result.textContent = parts.join("　/　");
     showError("");
-    await Promise.all([loadMembers(), loadProfiles()]);
+    await Promise.all([loadSession(), loadMembers(), loadProfiles()]);
   } catch (error) {
     result.textContent = "";
     showError(error.message);

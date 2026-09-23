@@ -391,6 +391,7 @@ def test_the_internal_id_is_not_exposed(client):
         "created_at",
         "courts",
         "highlight_beginners",
+        "tennisbear_event_id",
     }
 
 

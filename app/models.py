@@ -104,6 +104,13 @@ class PracticeSession(Base):
     highlight_beginners: Mapped[bool] = mapped_column(Boolean, default=False)
     """表示画面で初心者の名前を緑にするか。アルゴリズムの確認用で、ふだんは off。"""
 
+    tennisbear_event_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    """参加者を取り込んだイベント。一度取り込んだら以後はここに固定する。
+
+    別のイベントを取り込むと、居ない人が一斉に休憩へ回る。取り違えたときに
+    黙って起きると事故になるので、練習会ごとに1つに縛る。
+    """
+
     random_seed: Mapped[int] = mapped_column(BigInteger, default=new_random_seed)
     """この練習会の非決定性の種。作成時に採番し、以後不変。"""
 

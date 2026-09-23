@@ -170,6 +170,9 @@ def import_members(
     属性はこちらの DB を優先する（管理者が直した内容を戻さない）。
     """
     session = sessions_service.get_session(db, session_token)
+    # 取りに行く前に弾く。別のイベントだと分かっているのに外へ出ても無駄で、
+    # そのIDが実在しなければ「見つかりません」が先に返って理由がぼやける。
+    sessions_service.check_event(session, payload.event_id)
     html = tennisbear.fetch_event_page(
         payload.event_id,
         base_url=settings.tennisbear_base_url,

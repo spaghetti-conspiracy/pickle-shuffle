@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.api import public_router, router
 from app.config import settings
@@ -17,6 +18,8 @@ from app.errors import AppError
 from app.services.owners import ensure_bootstrap
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+logger = logging.getLogger(__name__)
 
 
 class RevalidatingStaticFiles(StaticFiles):
@@ -46,12 +49,19 @@ async def lifespan(app: FastAPI):
 
     `SKIP_DB_INIT=1` を立てれば、この確認ごと省ける（用意済みだと
     分かっているときや、起動を一切遅らせたくないとき用）。
+
+    **用意に失敗しても起動は止めない。** ここで例外を投げるとアプリ全体が
+    立ち上がらず、静的ファイルもメンバー用画面も含めて全部 500 になる。
+    DB が一時的に落ちているだけなら、次の起動で整えばよい。
     """
     if not settings.skip_db_init:
-        with SessionLocal() as db:
-            if needs_setup(db):
-                create_all()
-                ensure_bootstrap(db)
+        try:
+            with SessionLocal() as db:
+                if needs_setup(db):
+                    create_all()
+                    ensure_bootstrap(db)
+        except SQLAlchemyError:
+            logger.exception("起動時の DB の用意に失敗しました。次の起動でやり直します")
     yield
 
 

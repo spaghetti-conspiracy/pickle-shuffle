@@ -14,7 +14,7 @@ def _engine_kwargs(url: str, *, serverless: bool) -> dict:
     import app.config
     import app.db
 
-    before = app.config.IS_SERVERLESS
+    before = app.db.IS_SERVERLESS
     app.db.IS_SERVERLESS = serverless
     try:
         return app.db._engine_kwargs(url)
@@ -33,8 +33,10 @@ def test_serverless_reuses_one_connection():
     """
     kwargs = _engine_kwargs(POSTGRES, serverless=True)
     assert kwargs["poolclass"] is QueuePool, "NullPool に戻っている"
-    assert kwargs["pool_size"] == 1, "1インスタンスにつき1本にする"
-    assert kwargs["max_overflow"] == 0, "貯め込まない"
+    assert kwargs["pool_size"] == 1, "定常で持ち続けるのは1本"
+    # あふれ分まで 0 にすると、同時に来たリクエストが1本に直列化して
+    # `pool_timeout` を超える。返却時に閉じるので貯め込みにはならない。
+    assert 0 < kwargs["max_overflow"] <= 4, "同時に来たぶんを捌けず、かつ貯め込まない"
 
 
 def test_serverless_checks_the_connection_before_using_it():
@@ -58,23 +60,18 @@ def test_the_db_is_prepared_automatically(monkeypatch):
     手で流し忘れると、デプロイは成功して最初の利用者が 500 を踏む。
     起動が多少遅れても、自動で確かめるほうがよい（**ユーザー判断**）。
     """
-    import app.config
-
     monkeypatch.delenv("SKIP_DB_INIT", raising=False)
-    for serverless in (True, False):
-        monkeypatch.setattr(app.config, "IS_SERVERLESS", serverless)
-        assert load_settings().skip_db_init is False, "確認を省いている"
+    monkeypatch.delenv("VERCEL", raising=False)
+    assert load_settings().skip_db_init is False, "確認を省いている"
+
+    # サーバーレスでも省かない。`VERCEL` が実際に環境を切り替える変数。
+    monkeypatch.setenv("VERCEL", "1")
+    assert load_settings().skip_db_init is False, "サーバーレスだと確認を省いている"
 
 
-def test_the_check_costs_one_round_trip(db):
-    """確認は1往復で済むこと。
-
-    `create_all()` はテーブルを1つずつ照合するので、遠い DB では起動が
-    数秒延びる。ふだんは「管理者が1人でもいるか」を1回聞くだけにする。
-    """
+def _count_queries(db, work) -> list[str]:
+    """`work()` が実際に DB へ投げた SQL を数える。"""
     from sqlalchemy import event
-
-    from app.db import needs_setup
 
     queries: list[str] = []
     engine = db.get_bind()
@@ -84,12 +81,49 @@ def test_the_check_costs_one_round_trip(db):
 
     event.listen(engine, "before_cursor_execute", record)
     try:
-        needs_setup(db)
+        work()
     finally:
         event.remove(engine, "before_cursor_execute", record)
+    return queries
 
-    assert len(queries) == 1, f"往復が多い: {queries}"
-    assert "admins" in queries[0].lower()
+
+def test_the_check_does_not_scale_with_the_number_of_tables(db):
+    """確認の往復数が、テーブル数によらず一定であること。
+
+    `create_all()` はテーブルを1つずつ照合するので、テーブルが増えるほど
+    起動が延びる。遠い DB ではそれだけで数秒かかっていた。
+    ここは **一覧を1回もらって照合する＋管理者を1回聞く** の2往復で固定する。
+    """
+    from app.db import Base, needs_setup
+
+    queries = _count_queries(db, lambda: needs_setup(db))
+    assert len(queries) == 2, f"往復が多い: {queries}"
+    assert len(Base.metadata.tables) > 2, "テーブルが少なすぎて、この性質を確かめられない"
+    assert any("admins" in q.lower() for q in queries), "管理者を見ていない"
+
+
+def test_it_notices_when_a_table_is_missing(db):
+    """**テーブルが足りなければ、用意が要ると答えること。**
+
+    モデルにテーブルを1つ足して配ったとき、ここで気づけないと
+    そのテーブルは永久に作られず、触った瞬間に 500 になる。
+    「管理者がいるか」だけを見ていると、この状態を見逃す。
+    """
+    from sqlalchemy import inspect, text
+
+    from app.db import Base, needs_setup
+
+    assert needs_setup(db) is False, "用意済みなのに要ると言っている"
+
+    engine = db.get_bind()
+    victim = "round_participation"
+    assert victim in Base.metadata.tables, "テスト対象のテーブル名が変わっている"
+    db.rollback()
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP TABLE {victim}"))
+    assert victim not in inspect(engine).get_table_names(), "消せていない"
+
+    assert needs_setup(db) is True, "テーブルが欠けているのに要らないと言っている"
 
 
 def test_it_notices_when_the_db_is_not_ready(db):
@@ -107,14 +141,12 @@ def test_it_notices_when_the_db_is_not_ready(db):
 
 def test_the_setting_can_be_forced_either_way(monkeypatch):
     """環境変数で明示的に上書きできること。"""
-    import app.config
-
-    monkeypatch.setattr(app.config, "IS_SERVERLESS", False)
+    monkeypatch.delenv("VERCEL", raising=False)
     for value in ("1", "true", "YES", "on"):
         monkeypatch.setenv("SKIP_DB_INIT", value)
         assert load_settings().skip_db_init is True, f"{value} で立たない"
 
-    monkeypatch.setattr(app.config, "IS_SERVERLESS", True)
+    monkeypatch.setenv("VERCEL", "1")
     monkeypatch.setenv("SKIP_DB_INIT", "0")
     assert load_settings().skip_db_init is False, "明示的に切れない"
 
@@ -173,3 +205,74 @@ def test_the_environment_variable_is_read_in_one_place():
     assert "os.environ" not in source
     assert "settings.skip_db_init" in source
     assert os.environ is not None
+
+
+def _run_lifespan(monkeypatch, *, needs: bool, boom: bool = False) -> dict:
+    """`app.main.lifespan` を、DB を触らずに走らせて何を呼んだか見る。"""
+    import asyncio
+    import contextlib
+    import dataclasses
+
+    from sqlalchemy.exc import OperationalError
+
+    import app.main
+
+    calls: dict = {"create_all": 0, "ensure_bootstrap": 0}
+
+    @contextlib.contextmanager
+    def fake_session():
+        yield object()
+
+    def fake_needs_setup(db):  # noqa: ANN001
+        if boom:
+            raise OperationalError("select 1", {}, Exception("DB が落ちている"))
+        return needs
+
+    monkeypatch.setattr(app.main, "SessionLocal", fake_session)
+    monkeypatch.setattr(app.main, "needs_setup", fake_needs_setup)
+    monkeypatch.setattr(
+        app.main, "settings", dataclasses.replace(app.main.settings, skip_db_init=False)
+    )
+    monkeypatch.setattr(
+        app.main, "create_all", lambda: calls.__setitem__("create_all", calls["create_all"] + 1)
+    )
+    monkeypatch.setattr(
+        app.main,
+        "ensure_bootstrap",
+        lambda db: calls.__setitem__("ensure_bootstrap", calls["ensure_bootstrap"] + 1),
+    )
+
+    async def go():
+        async with app.main.lifespan(None):
+            pass
+
+    asyncio.run(go())
+    return calls
+
+
+def test_startup_prepares_the_db_when_it_is_not_ready(monkeypatch):
+    """**足りなければ、起動時にそのとき作る。**
+
+    再起動すれば勝手に整うほうが、手で流し忘れて最初の利用者が
+    500 を踏むより良い（ユーザー判断）。
+    """
+    calls = _run_lifespan(monkeypatch, needs=True)
+    assert calls["create_all"] == 1, "テーブルを作っていない"
+    assert calls["ensure_bootstrap"] == 1, "団体と管理者を用意していない"
+
+
+def test_startup_does_nothing_when_the_db_is_ready(monkeypatch):
+    """用意できていれば、起動を1往復以上遅らせないこと。"""
+    calls = _run_lifespan(monkeypatch, needs=False)
+    assert calls == {"create_all": 0, "ensure_bootstrap": 0}, "毎回フル点検に戻っている"
+
+
+def test_startup_survives_a_db_outage(monkeypatch):
+    """**用意に失敗しても、アプリは立ち上がること。**
+
+    ここで例外を投げるとアプリ全体が起動せず、静的ファイルもメンバー用
+    画面も含めて全部 500 になる。DB が一時的に落ちているだけなら、
+    次の起動で整えばよい。
+    """
+    calls = _run_lifespan(monkeypatch, needs=True, boom=True)
+    assert calls["create_all"] == 0, "落ちている DB に作りにいっている"

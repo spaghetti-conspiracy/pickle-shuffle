@@ -28,12 +28,18 @@ def _engine_kwargs(url: str) -> dict:
             # 毎回 TLS から張り直すと、遠い DB（Neon はアジアだとシンガポール
             # しかない）では**それだけで2秒**かかっていた。
             #
-            # 1インスタンスにつき1本だけ持つ。関数は同時に何十個も立ち上がる
-            # ので、1本ずつでも DB 側の上限には届く。貯め込まないこと。
+            # 定常では1インスタンスにつき1本だけ持つ。関数は同時に何十個も
+            # 立ち上がるので、1本ずつでも DB 側の上限には届く。貯め込まない。
+            #
+            # ただし**上限を1本にはしない**。API は全部同期の `def` なので
+            # Starlette はスレッドプールで並行に捌く。つまり1インスタンスが
+            # 同時に複数のリクエストを持つ。1本に直列化すると、終盤に端末が
+            # 揃って聞きに来たときに `pool_timeout` を超えて 500 になる。
+            # あふれた分は返却時に閉じるので、貯め込みにはならない。
             return {
                 "poolclass": QueuePool,
                 "pool_size": 1,
-                "max_overflow": 0,
+                "max_overflow": 3,
                 # 寝かせたままの接続は相手に切られていることがある。
                 # 使う前に1往復で確かめる（張り直すよりはるかに安い）。
                 "pool_pre_ping": True,
@@ -96,16 +102,26 @@ def create_all() -> None:
 
 
 def needs_setup(db: Session) -> bool:
-    """用意が要るかを、**1往復だけで**見る。
+    """用意が要るかを、**2往復だけで**見る。
 
     起動のたびに `create_all()` を呼ぶと、テーブルを1つずつ照合するために
     DB へ何度も往復する。遠い DB では、それだけで数秒かかっていた。
-    ふだんは「管理者が1人でもいるか」を1回聞くだけで足りる
-    （テーブルが無ければ問い合わせ自体が失敗するので、同時に分かる）。
+
+    代わりに、次の2つだけを聞く。
+
+    1. **テーブルが揃っているか**（一覧を1回もらって照合する）。
+       モデルにテーブルを足して配ったとき、ここで気づけないと
+       そのテーブルは永久に作られず、触った瞬間に 500 になる。
+       不変則8（`create_all` で用意する）はこの確認に支えられている。
+    2. **管理者が1人でもいるか**。テーブルはあるが中身が空、という
+       作りかけの状態を拾う。
     """
     from app.models import Admin  # 循環 import を避けるため、ここで読む
 
     try:
+        existing = set(inspect(db.get_bind()).get_table_names())
+        if set(Base.metadata.tables) - existing:
+            return True
         return db.execute(select(Admin.id).limit(1)).first() is None
     except SQLAlchemyError:
         db.rollback()

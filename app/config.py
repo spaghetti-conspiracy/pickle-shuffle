@@ -14,7 +14,8 @@ DEFAULT_ADMIN_PASSWORD = "thrivepickle"
 IS_SERVERLESS = bool(os.environ.get("VERCEL"))
 """Vercel などのサーバーレス環境で動いているか。
 
-関数インスタンスは短命で使い回されないため、接続プールを持たない方がよい。
+関数インスタンスは温まっている間くり返し使われるので、**接続は使い回す**。
+ただし定常で持つのは1本だけにする（`app/db.py` を参照）。
 """
 
 

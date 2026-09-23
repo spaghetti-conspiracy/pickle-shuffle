@@ -1,31 +1,48 @@
+# 手元の PC で動かすための構成。
+# Vercel と同じ PostgreSQL を使う。「ローカルでは動くのに本番で壊れる」を防ぐため。
+#
+#   docker compose up --build   →  http://localhost:8000
+#
+# SQLite で軽く動かしたいときは web の DATABASE_URL を
+#   sqlite:////app/data/app.db
+# に変えて db サービスを止めればよい（アプリ側のコード変更は要らない）。
+
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pickle
+      POSTGRES_PASSWORD: pickle
+      POSTGRES_DB: pickle
+    volumes:
+      # 練習会の記録。破棄したいときは docker compose down -v
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pickle"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   web:
     build: .
     ports:
       - "8000:8000"
     volumes:
-      # 練習会の記録。破棄したいときはこのディレクトリを消す。
+      # SQLite に切り替えたときの置き場所
       - ./data:/app/data
     environment:
-      DATABASE_URL: sqlite:////app/data/app.db
+      DATABASE_URL: postgresql+psycopg://pickle:pickle@db:5432/pickle
+      # 全体表示画面の QR コードに埋め込む URL。
+      # サーバと同じ PC のブラウザで localhost として開くと、その URL が QR に入り
+      # スマートフォンから届かない。そのときだけ .env に次のように書く。
+      #   PUBLIC_BASE_URL=http://192.168.1.10:8000
+      # タブレットから LAN の IP で開くなら、設定しなくてよい。
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
-  # ---------------------------------------------------------------
-  # 通常の DB に差し替えるとき。
-  #   1. 下の db サービスのコメントを外す
-  #   2. web の DATABASE_URL を次に変える
-  #        postgresql+psycopg://pickle:pickle@db:5432/pickle
-  #   3. Dockerfile の pip install を `pip install ".[postgres]"` に変える
-  # アプリ側のコードは ORM だけを使っているので、変更は不要。
-  # ---------------------------------------------------------------
-  # db:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     POSTGRES_USER: pickle
-  #     POSTGRES_PASSWORD: pickle
-  #     POSTGRES_DB: pickle
-  #   volumes:
-  #     - pgdata:/var/lib/postgresql/data
-  #
-  # volumes:
-  #   pgdata:
+volumes:
+  pgdata:

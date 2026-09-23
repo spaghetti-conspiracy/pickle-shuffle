@@ -339,7 +339,15 @@ def test_almost_everyone_shares_a_court_with_everyone():
     「いろんな人と当たれた」という体感に直結する性質。
     16名24ラウンドだと1人あたりの同席は 12試合 x 3人 = 36回で、相手は15人。
     全員と当たれるかどうかは回り方次第なので、全員必達は保証できない。
-    実測（10シード）では最低でも14人、シードによっては15人全員と当たれている。
+
+    閾値の根拠（2026-09-23 実測、10シード）:
+    「ペアの強さを揃える」減点（`strength_gap`）を入れると、左右の強さを合わせる分だけ
+    対戦相手の自由度が減り、最少が 14人 から 13人 に下がるシードが出る（10中2）。
+    重みを 5 に下げても同じ悪化が出るので、重みの調整では解けない。機能そのものの代償。
+    ユーザー判断で「強さを揃える」を優先し、ここは実測に合わせてある。
+
+    最少だけだと1人の運で揺れるので、平均も併せて見張る。実測は 14.75〜15.00 で、
+    15人中ほぼ全員と当たれている（取りこぼすのは1〜2人）。
     """
     rounds = 24
     for seed in (9000, 9001, 9002):
@@ -352,9 +360,14 @@ def test_almost_everyone_shares_a_court_with_everyone():
                 for member_id in match.member_ids:
                     met[member_id].update(set(match.member_ids) - {member_id})
 
-        fewest = min(len(partners) for partners in met.values())
-        assert fewest >= len(sim.specs) - 2, (
-            f"seed={seed}: 一度も当たっていない相手が多すぎる（最少 {fewest} 人）"
+        sizes = [len(partners) for partners in met.values()]
+        others = len(sim.specs) - 1
+        assert min(sizes) >= others - 2, (
+            f"seed={seed}: 一度も当たっていない相手が多すぎる（最少 {min(sizes)} 人）"
+        )
+        average = sum(sizes) / len(sizes)
+        assert average >= 14.5, (
+            f"seed={seed}: 取りこぼしが増えている（平均 {average:.2f} 人 / {others} 人中）"
         )
 
 

@@ -52,21 +52,57 @@ def test_sqlite_is_not_pooled_that_way():
     assert NullPool is not None  # import の意図を明示（比較対象として残す）
 
 
-def test_serverless_does_not_prepare_the_db_on_every_start(monkeypatch):
-    """**サーバーレスでは既定で用意しない。**
+def test_the_db_is_prepared_automatically(monkeypatch):
+    """**再起動すれば勝手に整う。**
 
-    関数は冷えるたびに起動し直す。そのたびにテーブルの照合と pbkdf2 20万回が
-    走ると、1回目のアクセスが何秒も遅くなる。用意は `python -m app.init_db` で
-    1度だけ行う。
+    手で流し忘れると、デプロイは成功して最初の利用者が 500 を踏む。
+    起動が多少遅れても、自動で確かめるほうがよい（**ユーザー判断**）。
     """
     import app.config
 
     monkeypatch.delenv("SKIP_DB_INIT", raising=False)
-    monkeypatch.setattr(app.config, "IS_SERVERLESS", True)
-    assert load_settings().skip_db_init is True, "サーバーレスで毎回用意している"
+    for serverless in (True, False):
+        monkeypatch.setattr(app.config, "IS_SERVERLESS", serverless)
+        assert load_settings().skip_db_init is False, "確認を省いている"
 
-    monkeypatch.setattr(app.config, "IS_SERVERLESS", False)
-    assert load_settings().skip_db_init is False, "手元では今までどおり用意する"
+
+def test_the_check_costs_one_round_trip(db):
+    """確認は1往復で済むこと。
+
+    `create_all()` はテーブルを1つずつ照合するので、遠い DB では起動が
+    数秒延びる。ふだんは「管理者が1人でもいるか」を1回聞くだけにする。
+    """
+    from sqlalchemy import event
+
+    from app.db import needs_setup
+
+    queries: list[str] = []
+    engine = db.get_bind()
+
+    def record(conn, cursor, statement, *args):  # noqa: ANN001
+        queries.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        needs_setup(db)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert len(queries) == 1, f"往復が多い: {queries}"
+    assert "admins" in queries[0].lower()
+
+
+def test_it_notices_when_the_db_is_not_ready(db):
+    """用意できていなければ、そう答えること。"""
+    from sqlalchemy import delete
+
+    from app.db import needs_setup
+    from app.models import Admin
+
+    assert needs_setup(db) is False, "用意済みなのに要ると言っている"
+    db.execute(delete(Admin))
+    db.commit()
+    assert needs_setup(db) is True, "管理者がいないのに要らないと言っている"
 
 
 def test_the_setting_can_be_forced_either_way(monkeypatch):

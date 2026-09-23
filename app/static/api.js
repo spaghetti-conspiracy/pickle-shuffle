@@ -32,6 +32,32 @@ export const api = {
   del: (path) => request("DELETE", path),
 };
 
+/** 時間がかかっている間、何をしているかを見せる。
+ *
+ * サーバーレスなので、しばらく使っていないと最初の1回だけ関数の起動と
+ * DB の点検が入り、数秒待たされる。黙って止まって見えると壊れたと思われるので、
+ * **待たせるときだけ**出す（速いときは何も出さない）。
+ *
+ * `element` に文字を書き、待っている間は点を増やして動いていることを示す。
+ */
+export function showWhileSlow(element, message, { after = 700 } = {}) {
+  let dots = 0;
+  let ticking = null;
+  const start = setTimeout(() => {
+    element.textContent = message;
+    ticking = setInterval(() => {
+      dots = (dots + 1) % 4;
+      element.textContent = message + "．".repeat(dots);
+    }, 400);
+  }, after);
+
+  return () => {
+    clearTimeout(start);
+    if (ticking !== null) clearInterval(ticking);
+    element.textContent = "";
+  };
+}
+
 /** 合言葉が切れていたらトップ画面に戻す。
  *
  * 管理画面と全体表示画面は、トップ画面で合言葉を入れてから開くもの。
@@ -67,6 +93,8 @@ export function createPasswordGate({ load }) {
   }
 
   async function enter() {
+    // しばらく使っていないと、最初の1回はサーバの起動と DB の点検が入る。
+    const done = showWhileSlow(error, "サーバを起こして、データベースを点検しています");
     try {
       await load();
       show("main");
@@ -75,16 +103,23 @@ export function createPasswordGate({ load }) {
       if (failure.status !== 401) throw failure;
       show("gate");
       return false;
+    } finally {
+      done();
     }
   }
 
   document.getElementById("unlock").addEventListener("click", async () => {
     error.textContent = "";
+    const done = showWhileSlow(error, "合言葉を確かめています");
     try {
       await request("POST", "/api/login", {
         password: document.getElementById("password").value,
       });
+      done();
     } catch (failure) {
+      // **先に消してから書く。** 逆にすると、待ち表示の後片付けが
+      // エラーの文言を消してしまう。
+      done();
       error.textContent = failure.message;
       return;
     }

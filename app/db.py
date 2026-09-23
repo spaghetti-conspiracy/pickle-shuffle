@@ -6,7 +6,7 @@ import contextlib
 from collections.abc import Iterator
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, inspect, make_url
+from sqlalchemy import create_engine, event, inspect, make_url, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -93,6 +93,23 @@ def create_all() -> None:
         missing = set(Base.metadata.tables) - set(inspect(engine).get_table_names())
         if missing:
             raise
+
+
+def needs_setup(db: Session) -> bool:
+    """用意が要るかを、**1往復だけで**見る。
+
+    起動のたびに `create_all()` を呼ぶと、テーブルを1つずつ照合するために
+    DB へ何度も往復する。遠い DB では、それだけで数秒かかっていた。
+    ふだんは「管理者が1人でもいるか」を1回聞くだけで足りる
+    （テーブルが無ければ問い合わせ自体が失敗するので、同時に分かる）。
+    """
+    from app.models import Admin  # 循環 import を避けるため、ここで読む
+
+    try:
+        return db.execute(select(Admin.id).limit(1)).first() is None
+    except SQLAlchemyError:
+        db.rollback()
+        return True
 
 
 def get_db() -> Iterator[Session]:

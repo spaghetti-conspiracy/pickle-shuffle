@@ -38,15 +38,14 @@ class Settings:
     tennisbear_timeout: float = 10.0
     """取り込みの待ち時間。待たせすぎるより、やり直してもらう方がよい。"""
 
-    skip_db_init: bool = IS_SERVERLESS
-    """起動のたびにテーブルと管理者を用意し直さない。
+    skip_db_init: bool = False
+    """起動時の確認そのものを省く。
 
-    **サーバーレスでは既定でやらない。** 関数は冷えるたびに起動し直すので、
-    そのたびにテーブルの照合と pbkdf2 20万回をやると1回目が何秒も遅くなる。
-    用意は `python -m app.init_db` で1度だけ行う（DEPLOY_SETUP.md）。
+    既定では**確認する**（1往復だけ。足りなければそのとき作る）。
+    再起動すれば勝手に整うほうが、手で流し忘れて最初の利用者が踏むより良い。
 
-    手元とコンテナでは今までどおり起動時に用意する（そのほうが手数が少ない）。
-    `SKIP_DB_INIT` で明示的に上書きできる。
+    起動を一切遅らせたくない場合や、用意済みだと分かっている場合に
+    `SKIP_DB_INIT=1` で省ける。
     """
 
     admin_password: str = DEFAULT_ADMIN_PASSWORD
@@ -96,7 +95,7 @@ def load_settings() -> Settings:
         ).strip().rstrip("/"),
         tennisbear_timeout=_env_int("TENNISBEAR_TIMEOUT", 10),
         admin_password=os.environ.get("ADMIN_PASSWORD") or DEFAULT_ADMIN_PASSWORD,
-        skip_db_init=_env_bool("SKIP_DB_INIT", default=IS_SERVERLESS),
+        skip_db_init=_env_bool("SKIP_DB_INIT", default=False),
         fairness_slack=_env_int("FAIRNESS_SLACK", 0),
         lookahead=_env_int("LOOKAHEAD", 1),
         beam=_env_int("BEAM", 16),

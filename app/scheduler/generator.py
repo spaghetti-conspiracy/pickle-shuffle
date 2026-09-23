@@ -49,7 +49,16 @@ PAIRINGS_OF_FOUR = (((0, 1), (2, 3)), ((0, 2), (1, 3)), ((0, 3), (1, 2)))
 #: 1ラウンドの組み分けを探すとき、各段で残す候補数。
 #: 8人（2面）なら分け方は35通りしかないので、この値で全通りが残り厳密になる。
 #: 3面以上では刈り込みが入るが、コート数が増えても計算量は破綻しない。
-BATCH_BEAM = 64
+#:
+#: 仕様3a（初心者同士ペア）を守るのはこの値ではなく、出場者を制約の強い順に
+#: 並べること（`_plan_round` を参照）。並べ替えを入れれば 64 でも 0 件になる。
+#:
+#: この値が効くのは優先度5（初心者ペアの集中）。履歴が溜まると差が出る。
+#: 12人3面・初心者3名・24ラウンド・10シードの実測:
+#:     64 → 片側だけ初心者 2.07/ラウンド（理想 1.0）、ばらけ超過 0.076、85ms
+#:    512 → 1.73、0.080、96ms
+#: ばらけ（優先度1）がわずかに悪化するが、集中（優先度5）の改善の方が大きい。
+BATCH_BEAM = 512
 
 #: 先読みの中での組み分け探索はもっと粗くてよい。
 ROLLOUT_BATCH_BEAM = 16
@@ -279,10 +288,15 @@ class _Scorer:
         *,
         rng: random.Random,
         avoid_matches: frozenset = frozenset(),
+        tie_salt: int = 0,
     ) -> None:
         self._state = state
         self._weights = weights
         self._rng = rng
+        # 刈り込みの同点をほぐすための塩。練習会のシードから渡す。
+        # ここで乱数を引くと乱数列がずれ、先読みが候補を同じ運の下で
+        # 比べられなくなる（共通乱数法が崩れる）。
+        self._tie_salt = tie_salt
         self._avoid_matches = avoid_matches
         self._match_cost_cache: dict[tuple[Pair, Pair], int] = {}
         self._group_cache: dict[Group, tuple[int, tuple[Pair, Pair]]] = {}
@@ -298,6 +312,18 @@ class _Scorer:
             self.pair_has_beginner[key] = int(a.is_beginner or b.is_beginner)
             self.pair_strength[key] = a.strength + b.strength
             self.pair_cost[key] = self._compute_pair_cost(a, b, key)
+
+    def tie_break(self, groups: Batch) -> int:
+        """同点の候補を刈り込むときの並べ替えキー。
+
+        乱数を引かずに決めるので、候補をまたいで乱数列がずれない。
+        member_id と無相関なので、id の小さい組だけが生き残ることもない
+        （不変則9/10）。塩はラウンドごとに変わる。
+        """
+        material = struct.pack("<q", self._tie_salt) + b"".join(
+            struct.pack("<q", member_id) for group in groups for member_id in group
+        )
+        return int.from_bytes(hashlib.blake2b(material, digest_size=8).digest(), "little")
 
     def _compute_pair_cost(self, a: PlayerStat, b: PlayerStat, key: Pair) -> int:
         w = self._weights
@@ -364,9 +390,9 @@ class _Scorer:
         best_pairing: tuple[Pair, Pair] | None = None
         ties = 0
         for (i, j), (k, m) in PAIRINGS_OF_FOUR:
-            # group は昇順なので、そのまま並べればペアも昇順になる。
-            pair_a: Pair = (group[i], group[j])
-            pair_b: Pair = (group[k], group[m])
+            # group の並びは制約の強い順なので、キーはここで正規化する。
+            pair_a: Pair = pair_key(group[i], group[j])
+            pair_b: Pair = pair_key(group[k], group[m])
             cost = self.pair_cost[pair_a] + self.pair_cost[pair_b]
             cost += self.match_cost(pair_a, pair_b)
             # 優先度5: 初心者を含むペア同士でマッチを組む。
@@ -446,7 +472,7 @@ def split_into_matches(
     n_matches: int,
     scorer: _Scorer,
     *,
-    beam_width: int = BATCH_BEAM,
+    beam_width: int | None = None,
 ) -> list[tuple[int, Batch]]:
     """出場者を n_matches 個の4人組に分ける。安い順に返す。
 
@@ -455,6 +481,8 @@ def split_into_matches(
     16人で262万と増えるので、1試合決めるごとに安い順へ刈り込む。
     8人（2面）なら35通りすべてが残るため、よく使う構成では厳密な最小解になる。
     """
+    # 既定値を引数に書くと定義時に束縛され、定数を差し替えても効かない。
+    beam_width = BATCH_BEAM if beam_width is None else beam_width
     total = len(ids)
     states: list[tuple[int, Batch, int]] = [(0, (), 0)]  # コスト, 組み分け, 使用済みビット
 
@@ -471,7 +499,13 @@ def split_into_matches(
                 for i in indexes:
                     mask |= 1 << i
                 nxt.append((cost + group_cost, (*groups, group), mask))
-        states = nxt if len(nxt) <= beam_width else heapq.nsmallest(beam_width, nxt)
+        if len(nxt) <= beam_width:
+            states = nxt
+        else:
+            # キーを挟まないと、同点はタプルの次の要素＝member_id の辞書順で
+            # 決まり、id の小さい組ばかりが生き残る（不変則9/10）。
+            keyed = [(c, scorer.tie_break(g), g, m) for c, g, m in nxt]
+            states = [(c, g, m) for c, _key, g, m in heapq.nsmallest(beam_width, keyed)]
 
     return [(cost, groups) for cost, groups, _used in states]
 
@@ -503,7 +537,8 @@ def _plan_round(
     max_candidate_sets: int,
     rng: random.Random,
     keep: int,
-    batch_beam: int = BATCH_BEAM,
+    tie_salt: int,
+    batch_beam: int | None = None,
     avoid_rounds: frozenset = frozenset(),
     avoid_matches: frozenset = frozenset(),
 ) -> tuple[list[Candidate], _Scorer]:
@@ -519,13 +554,26 @@ def _plan_round(
         rng=rng,
     )
 
-    scorer = _Scorer(active, state, weights, rng=rng, avoid_matches=avoid_matches)
+    scorer = _Scorer(
+        active, state, weights, rng=rng, avoid_matches=avoid_matches, tie_salt=tie_salt
+    )
     costs = player_costs(active, state, weights)
     baseline = benched_baseline(active, state, weights)
 
+    # 組を決める順番。制約の強い人（初心者 → ルール未習得 → その他）を先に置く。
+    # 探索は「まだ使っていない中で先頭の人」を必ず次の組に入れるので、後ろに
+    # 置かれた人ほど選択肢が残らない。初心者が最後に固まると、避けようのない
+    # 初心者同士ペアができてしまう（仕様3a）。
+    #
+    # 同じ制約どうしは id 順のまま並べる。ここを変えると、レベル差が無い
+    # 練習会でも探索の道筋が変わり、ばらけ（優先度1）が落ちる。
+    # id 順に並べても偏りは出ない。刈り込みの同点は tie_break が決めるので、
+    # 「id の小さい組だけが生き残る」ことはない（不変則9/10）。
+    rank = {p.id: (0 if p.is_beginner else 1 if not p.knows_rules else 2) for p in active}
+
     scored: list[tuple[int, int, Batch]] = []
     for selected in candidate_sets:
-        ids = tuple(sorted(p.id for p in selected))
+        ids = tuple(sorted((p.id for p in selected), key=lambda i: (rank[i], i)))
         base = baseline + sum(costs[member_id] for member_id in ids)
         for cost, batch in split_into_matches(
             ids, n_matches, scorer, beam_width=batch_beam
@@ -578,6 +626,7 @@ def _rollout_cost(
             max_candidate_sets=ROLLOUT_CANDIDATE_SETS,
             rng=rng,
             keep=1,
+            tie_salt=seed,
             batch_beam=ROLLOUT_BATCH_BEAM,
         )
         if not following:
@@ -677,6 +726,9 @@ def generate_round(
     active = [p for p in normalized if p.status is MemberStatus.ACTIVE]
     resting = [p for p in normalized if p.status is MemberStatus.RESTING]
 
+    if court_count < 1:
+        # 呼び出し側が先に弾くが、人数のせいだと誤解させる文面は出さない。
+        raise NotEnoughPlayersError("試合に使えるコートがありません")
     n_matches = min(court_count, len(active) // PLAYERS_PER_MATCH)
     if n_matches < 1:
         raise NotEnoughPlayersError(
@@ -702,6 +754,7 @@ def generate_round(
         max_candidate_sets=effective_sets,
         rng=rng,
         keep=effective_beam if lookahead > 0 else 1,
+        tie_salt=seed,
         avoid_rounds=avoid_rounds,
         avoid_matches=avoid_matches,
     )

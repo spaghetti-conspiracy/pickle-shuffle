@@ -113,12 +113,41 @@ jobs:
         env:
           PRODUCTION_URL: ${{ vars.PRODUCTION_DOMAIN }}
         run: |
+          set -euo pipefail
           if [ -z "$PRODUCTION_URL" ]; then
-            echo "PRODUCTION_DOMAIN が未設定。確認は省略する。"
+            echo "::warning::PRODUCTION_DOMAIN が未設定。出したものを確かめていない"
+            {
+              echo "### 本番の確認を省略した"
+              echo ""
+              echo "\`PRODUCTION_DOMAIN\`（Variables）が未設定です。"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          base="https://$PRODUCTION_URL"
+
+          # 1. 起動しているか
           for i in $(seq 1 20); do
-            curl -sf "https://$PRODUCTION_URL/api/health" && exit 0
+            curl -sf "$base/api/health" > /dev/null && break
             sleep 5
           done
-          echo "本番が応答しない"; exit 1
+          test "$(curl -s "$base/api/health")" = '{"status":"ok"}'
+
+          # 2. **DB に届いているか。** health は DB に触らないので、
+          #    接続文字列が違っても移行を流し忘れても 200 が返ってしまう。
+          #    存在しない練習会を引く経路なら、合言葉なしで SELECT を1回通せる。
+          #    404 が返れば DB に届いてテーブルもある。500 なら届いていない。
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+                 "$base/api/sessions/zzzzzzzzzz/current")
+          case "$code" in
+            404) echo "DB まで届いている" ;;
+            *) echo "::error::DB に届いていない（$code）。接続文字列と移行を確認すること"
+               exit 1 ;;
+          esac
+
+          # 3. 合言葉の門が開いていないか
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$base/api/sessions")
+          test "$code" = "401" || { echo "::error::合言葉なしで通る（$code）"; exit 1; }
+
+          # 4. メンバー用画面が配られているか（QR の行き先）
+          curl -sf "$base/member.html" > /dev/null
+          echo "本番の確認 OK"

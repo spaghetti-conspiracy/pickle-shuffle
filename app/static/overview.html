@@ -14,6 +14,7 @@
   <div class="overview-head">
     <h1 id="session-name"></h1>
     <span id="warnings" class="warnings"></span>
+    <span id="offline" class="error hidden"></span>
     <a id="admin-link" href="/">メンバー登録へ</a>
   </div>
 
@@ -26,11 +27,15 @@
         <img id="qr" class="hidden" alt="メンバー用画面のQRコード">
         <p class="hint">スマートフォンで読み取ると、自分のコートを見られます</p>
         <p id="member-url" class="url"></p>
-        <p id="qr-warning" class="notice hidden">
+        <p id="qr-warning" class="notice warn hidden">
           この端末だけで通じるアドレスです。スマートフォンから使うには、
           この画面を <b>PC の LAN の IP</b> で開き直してください。
           （例: http://192.168.1.10:8000/）
         </p>
+      </section>
+      <section>
+        <h2>名前の色</h2>
+        <p id="legend" class="legend"></p>
       </section>
       <section>
         <h2>待機中</h2>

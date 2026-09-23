@@ -5,9 +5,16 @@
  * （再スケジュールはリーダーの意図、その拡散は自動）。
  */
 
-import { api, currentSessionToken, rememberSessionToken, startPolling } from "/api.js";
+import {
+  $,
+  api,
+  createGate,
+  currentSessionToken,
+  playerLabel,
+  rememberSessionToken,
+  startPolling,
+} from "/api.js";
 
-const $ = (id) => document.getElementById(id);
 const POLL_INTERVAL_MS = 2000;
 // リーダーが操作する画面。押した結果は応答で即座に反映されるので、
 // このポーリングは他端末の操作に追従するためのもの。
@@ -16,6 +23,7 @@ const sessionToken = currentSessionToken();
 let lastRevision = null;
 let busy = false;
 let poller = null;
+const gate = createGate();
 
 /** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
 const EMPTY_COURT_MESSAGE = {
@@ -24,27 +32,6 @@ const EMPTY_COURT_MESSAGE = {
   idle: "人数が足りません",
   practice: "練習コート",
 };
-
-/** 名前の色分け。男女の区分が一目で分かるようにする。
- *
- * 初心者を緑にするかどうかは練習会の設定で切り替える。緑はアルゴリズムの
- * 確認用で、ふだんは男女の区分だけで色を付ける。
- */
-function toneOf(player, highlightBeginners) {
-  if (highlightBeginners && player.level === "beginner") return "beginner";
-  return player.gender;
-}
-
-/** 名前を1行に収める。長い名前は文字数に応じて縮める。 */
-function playerLabel(player, highlightBeginners) {
-  const label = document.createElement("div");
-  label.className = "player";
-  label.textContent = player.nickname;
-  label.dataset.tone = toneOf(player, highlightBeginners);
-  // 全角1文字をほぼ1em とみなし、収まる大きさを CSS 側で逆算させる。
-  label.style.setProperty("--len", String(Math.max(player.nickname.length, 3)));
-  return label;
-}
 
 function renderCourt(court, highlightBeginners) {
   const element = document.createElement("div");
@@ -81,6 +68,28 @@ function renderCourt(court, highlightBeginners) {
 
   element.append(body);
   return element;
+}
+
+/** 色の意味を書いておく。
+ *
+ * 色だけで伝えると、初見のリーダーには意味が分からないし、
+ * 色覚特性のある人には女性と初心者の区別が付かない。
+ */
+function renderLegend(highlightBeginners) {
+  const items = [
+    ["male", "男性"],
+    ["female", "女性"],
+    ["other", "その他"],
+  ];
+  if (highlightBeginners) items.push(["beginner", "初心者"]);
+  const legend = $("legend");
+  legend.innerHTML = "";
+  for (const [tone, label] of items) {
+    const item = document.createElement("span");
+    item.className = tone;
+    item.textContent = label;
+    legend.append(item);
+  }
 }
 
 /** QR と同じ URL を文字でも出す。読み上げにも使うし、届かないときに気づける。 */
@@ -122,15 +131,26 @@ function render(data) {
     $("next").textContent = data.round_id === null ? "マッチを作る" : "次のマッチ";
   }
 
+  renderLegend(highlightBeginners);
   renderMemberUrl(data.member_url);
+}
+
+function setOffline(message) {
+  const element = $("offline");
+  element.textContent = message;
+  element.classList.toggle("hidden", !message);
 }
 
 async function poll() {
   if (busy) return;
+  const token = gate.token();
   try {
     const data = await api.get(`/api/sessions/${sessionToken}/current`);
-    // 描き直すべきときだけ描き直す。revision にはマッチの中身を左右する値が
-    // 入っていないので、メンバーを編集しても試合中の組み合わせは動かない。
+    // 待っている間に利用者が操作していたら、この応答はもう古い。
+    // 描くと、押した直後に前のマッチへ巻き戻って見える。
+    if (gate.isStale(token)) return;
+    setOffline("");
+    // 描き直すべきときだけ描き直す。revision は表示すべき中身の指紋。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
       render(data);
@@ -140,7 +160,7 @@ async function poll() {
       showGone();
     } else {
       // 一時的な通信の失敗。次のポーリングで復帰する見込みなので画面は残す。
-      $("warnings").textContent = `通信できません（${error.message}）`;
+      setOffline(`通信できません（${error.message}）`);
     }
   } finally {
     document.body.dataset.ready = "1";
@@ -159,15 +179,22 @@ function showGone() {
 async function act(run) {
   if (busy) return;
   busy = true;
+  gate.bump(); // 先に飛んでいたポーリングの応答を捨てる
   try {
     const data = await run();
+    gate.bump();
+    setOffline("");
     lastRevision = data.revision;
     render(data);
   } catch (error) {
-    if (error.status === 409) {
+    gate.bump();
+    if (error.code === "conflict") {
       lastRevision = null; // 他端末が先に進めた。次のポーリングで追従する。
     } else {
-      $("warnings").textContent = error.message;
+      // 人数不足（409）もここに来る。黙って捨てると、押しても何も起きない
+      // 画面になる。練習会の開始直後はまだ4人揃っていないのが普通なので、
+      // いちばん必要な場面でいちばん必要な説明が消えてしまう。
+      setOffline(error.message);
     }
   } finally {
     busy = false;

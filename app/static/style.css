@@ -182,10 +182,46 @@ tr.left {
   color: var(--warn);
 }
 
+/* 画面の使い方を説明する地の文。警告ではない。 */
 .notice {
-  color: var(--warn);
+  color: var(--muted);
   font-size: 0.85rem;
   margin-top: 0.5rem;
+}
+
+/* 本当に注意してほしいものだけ警告色にする。 */
+.notice.warn {
+  color: var(--warn);
+}
+
+/* 色の凡例。色だけに頼らずに済むよう、名前の横に小さく出す。 */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.legend span::before {
+  content: "\25cf";
+  margin-right: 0.2em;
+}
+
+.legend .male::before {
+  color: #9ec5ff;
+}
+
+.legend .female::before {
+  color: #ffc4a8;
+}
+
+.legend .other::before {
+  color: var(--text);
+}
+
+.legend .beginner::before {
+  color: #9ee6a8;
 }
 
 .error {
@@ -272,18 +308,33 @@ tr.left {
   flex-direction: column;
   align-items: center;
   gap: 0.15em;
+  container-type: inline-size;
 }
 
 /* 名前は折り返さず、長いときは文字を縮めて1行に収める。
    2行になると誰の名前か読み取りにくく、読み上げにも使いにくい。
-   --len には文字数が入る（描画時に設定する）。全角1文字をほぼ1em として、
-   収まる幅から逆算した大きさと、通常の大きさの小さい方を採る。 */
+   --len には全角換算の文字数が入る（描画時に設定する）。
+   全角1文字をほぼ1em として、収まる幅から逆算した大きさと、
+   通常の大きさの小さい方を採る。 */
 .player {
   font-size: max(0.85rem, min(2.2rem, calc(40vw / var(--len, 4))));
   font-weight: 700;
   line-height: 1.15;
   text-align: center;
   white-space: nowrap;
+  /* 逆算が外れても、切れたことが分かるようにする。 */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ビューポート幅ではなく、実際に名前が入る欄の幅で逆算する。
+   全体表示画面の1チーム欄は、サイドバーを引いた残りの半分しかないので、
+   画面が広いほど 40vw は過大になり、名前が欄からはみ出して切れていた。 */
+@supports (container-type: inline-size) {
+  .team .player {
+    font-size: max(0.85rem, min(2.2rem, calc(92cqw / var(--len, 4))));
+  }
 }
 
 /* 名前の色。男女の区分が一目で分かるようにする。
@@ -302,6 +353,15 @@ tr.left {
 
 .player[data-tone="beginner"] {
   color: #9ee6a8;
+}
+
+/* 女性の暖色と初心者の緑は、色相を取り除くとほぼ同じ明るさになる。
+   色だけに頼らないよう、初心者には小さな印を添える。 */
+.player[data-tone="beginner"]::after {
+  content: "初";
+  font-size: 0.5em;
+  vertical-align: super;
+  margin-left: 0.15em;
 }
 
 .versus {

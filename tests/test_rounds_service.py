@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.errors import ConflictError, NotEnoughPlayersError
+from app.models import Round
 from app.scheduler.domain import Gender, Level, MemberStatus, RoundStatus
 from app.services import rounds as rounds_service
 from app.services import sessions as sessions_service
@@ -309,3 +310,90 @@ def test_a_level_change_does_not_move_the_displayed_match(db):
         (s.match_id, s.team_index, s.member_id) for m in round_.matches for s in m.slots
     ]
     assert after == before
+
+
+# ---------------------------------------------------------------------------
+# 別端末からの同時操作
+#
+# 管理画面・全体表示画面・メンバー用画面は別端末から同時に使われる前提。
+# 状態を在メモリで見てから書くと、相手のコミットを見落として両方成功する。
+# ---------------------------------------------------------------------------
+
+
+def _two_views(session_factory, round_id: int):
+    """同じラウンドを、2つの端末がそれぞれ読んだ状態を作る。"""
+    left, right = session_factory(), session_factory()
+    return left, right, left.get(Round, round_id), right.get(Round, round_id)
+
+
+def test_skipping_after_another_device_started_is_rejected(db, session_factory):
+    """開始した直後にスキップが押されても、開始した事実は消えない。"""
+    session = make_session(db)
+    pending = rounds_service.generate(db, session)
+
+    left, right, seen_by_left, seen_by_right = _two_views(session_factory, pending.id)
+    rounds_service.adopt(left, seen_by_left)
+
+    # 右の端末は、まだ pending だと思っている。
+    assert seen_by_right.status is RoundStatus.PENDING
+    with pytest.raises(ConflictError):
+        rounds_service.reject(right, seen_by_right)
+
+    assert len(stats_service.adopted_rounds(db, session.id)) == 1
+    assert sum(stats_service.play_counts(db, session.id).values()) == 8
+
+
+def test_starting_the_same_round_twice_from_two_devices(db, session_factory):
+    """同じマッチを2台から同時に開始しても、採用は1回だけ。"""
+    session = make_session(db)
+    pending = rounds_service.generate(db, session)
+
+    left, right, seen_by_left, seen_by_right = _two_views(session_factory, pending.id)
+    rounds_service.adopt(left, seen_by_left)
+    with pytest.raises(ConflictError):
+        rounds_service.adopt(right, seen_by_right)
+
+    assert len(stats_service.adopted_rounds(db, session.id)) == 1
+
+
+def test_a_leftover_pending_does_not_hide_the_started_match(db, session_factory):
+    """pending が2本できても、開始したマッチが隠れない。
+
+    生成が同時に走ると pending が2本できることがある。残したままだと
+    表示画面が古い方を出し続け、しかもそれを二重に採用できてしまう。
+    """
+    session = make_session(db)
+    stale = rounds_service.generate(db, session)
+    # 生成の競合で、もう1本 pending ができた状況を作る。
+    fresh = Round(session_id=session.id, status=RoundStatus.PENDING, attempt=1)
+    db.add(fresh)
+    db.commit()
+
+    rounds_service.adopt(db, fresh)
+
+    db.refresh(stale)
+    assert stale.status is RoundStatus.REJECTED, "古い pending は片付ける"
+    current = rounds_service.current_round(db, session.id)
+    assert current is not None and current.id == fresh.id, "開始したマッチが出る"
+    with pytest.raises(ConflictError):
+        rounds_service.adopt(db, stale)
+
+
+def test_a_member_deleted_while_playing_keeps_the_round_record(db):
+    """出場中に削除されたメンバーも、そのラウンドの記録としては残る。
+
+    残さないと MatchSlot だけが残り、当時のレベルが引けなくなる。
+    初心者を受け持ったパートナーの負担が履歴から消える（不変則2）。
+    """
+    session, members = _beginner_session(db, beginners=1)
+    beginner = members[0]
+    round_ = rounds_service.generate(db, session)
+    partner = _partner_of(round_, beginner.id)
+
+    sessions_service.remove_member(db, beginner)
+    rounds_service.adopt(db, round_)
+
+    levels = stats_service.round_levels(db, session.id)[round_.id]
+    assert levels[beginner.id] is Level.BEGINNER, "当時のレベルが残る"
+    history = stats_service.build_history(db, session.id)
+    assert history.beginner_partner_count[partner] == 1, "受け持った事実が消えない"

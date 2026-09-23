@@ -220,16 +220,36 @@ function renderClock() {
   $("pause").textContent = state === "paused" ? "再開" : "一時停止";
   // 時間切れのあとは「アラームオフ」と「次のマッチ」だけにする。
   $("stop-timer").classList.toggle("hidden", !running || timedOut);
-  $("alarm-off").classList.toggle("hidden", !alarm.ringing);
+  // 30秒で自動停止したあとも押せるようにする。押せないと、あとから開いた
+  // 端末が鳴り始めたときに、全員を止める手段が残らない。
+  $("alarm-off").classList.toggle(
+    "hidden",
+    !(timedOut && !clock.isSilenced()),
+  );
 
   // 鳴らすのは1回だけ。止めたあとに鳴り直さない。
+  // タブを裏に回すとポーリングが止まるので、手元の時計だけで判断すると、
+  // その間に一時停止されていても鳴ってしまう。直前に1回確かめる。
   if (clock.shouldRing() && !alarmDone) {
     alarmDone = true;
-    alarm.start();
+    confirmThenRing();
   }
   // ほかの端末で止められたら、こちらも止める。
   if (!clock.shouldRing()) alarm.stop();
   if (!timedOut) alarmDone = false;
+}
+
+/** サーバに確かめてから鳴らす。 */
+async function confirmThenRing() {
+  try {
+    const data = await api.get(`/api/sessions/${sessionToken}/current`);
+    clock.sync(data.timer);
+    if (clock.shouldRing()) alarm.start();
+    else alarm.stop();
+  } catch {
+    // つながらなければ鳴らさない。次のポーリングでやり直す。
+    alarmDone = false;
+  }
 }
 
 function setNotice(message, fromAction = false) {

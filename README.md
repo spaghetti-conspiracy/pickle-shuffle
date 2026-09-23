@@ -93,6 +93,17 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost/pickle
 
 `docker-compose.yml` に PostgreSQL を足す例をコメントで入れてある。
 
+## 更新するとき
+
+スキーマを変えたときはマイグレーションを持たない方針なので（CLAUDE.md 不変則8）、
+**DB を作り直してください**。`create_all` は既存のテーブルに列を足しません。
+
+```
+docker compose down -v && docker compose up --build
+```
+
+記録は練習会ごとに使い捨てる前提なので、作り直して困るものはありません。
+
 ## 記録を破棄する
 
 管理画面から練習会を削除する。まるごと消すなら:

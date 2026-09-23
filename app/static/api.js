@@ -11,7 +11,12 @@ export async function request(method, path, body) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const error = new Error(data?.detail ?? `${response.status} ${response.statusText}`);
+    // FastAPI の入力検証は detail を配列で返す。そのまま Error に渡すと
+    // 画面に「[object Object]」と出てしまう。
+    const detail = Array.isArray(data?.detail)
+      ? data.detail.map((d) => d.msg ?? String(d)).join("　")
+      : data?.detail;
+    const error = new Error(detail ?? `${response.status} ${response.statusText}`);
     error.status = response.status;
     // 同じ 409 でも「他端末が先に操作した」と「人数が足りない」は扱いが違う。
     error.code = data?.code ?? "";

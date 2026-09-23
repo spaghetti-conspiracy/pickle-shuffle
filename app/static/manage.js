@@ -279,6 +279,9 @@ $("import-members").addEventListener("click", async () => {
       parts.push(`呼び名の変更 ${pairs.join("、")}`);
     }
     if (summary.unchanged) parts.push(`${summary.unchanged}人は登録済み`);
+    if (summary.resting.length) {
+      parts.push(`休憩にした ${summary.resting.join("、")}`);
+    }
     result.textContent = parts.join("　/　");
     showError("");
     await Promise.all([loadMembers(), loadProfiles()]);

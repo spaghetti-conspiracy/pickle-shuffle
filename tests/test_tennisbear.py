@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from app.errors import UpstreamError
-from app.scheduler.domain import Gender, Level
+from app.errors import UpstreamError, ValidationError
+from app.scheduler.domain import Gender, Level, MemberStatus
 from app.services import sessions as sessions_service
 from app.tennisbear import (
     Participant,
@@ -264,3 +264,199 @@ def test_attributes_come_back_from_a_previous_session(db):
     imported = sessions_service.list_members(db, second.id)[0]
     assert imported.level is Level.BEGINNER, "前回直したレベルが使われていない"
     assert imported.nickname == "だれか改", "今の呼び名で登録する"
+
+
+# ---------------------------------------------------------------------------
+# レビューで見つかった欠陥の回帰テスト
+# ---------------------------------------------------------------------------
+
+
+def test_a_returning_participant_does_not_break_the_import(db):
+    """同名の人が過去にいても、取り込みが失敗しない。
+
+    `member_profiles.nickname` は一意。ID で引いた行の名前を書き換えると、
+    別の行とぶつかって取り込みが丸ごと 409 になり、しかも途中まで登録が残る。
+    """
+    first = _session(db, "先週")
+    sessions_service.import_participants(
+        db, first, [_participant(1, "マッツ"), _participant(2, "マッツ")]
+    )
+    assert [m.nickname for m in sessions_service.list_members(db, first.id)] == [
+        "マッツ",
+        "マッツ2",
+    ]
+
+    # 今週は2人目だけが参加する
+    second = _session(db, "今週")
+    result = sessions_service.import_participants(db, second, [_participant(2, "マッツ")])
+    assert result.added == ["マッツ"], "取り込みが失敗している"
+
+
+def test_a_namesake_does_not_inherit_someone_elses_level(db):
+    """同名の別人の属性を引き継がない。
+
+    ID が分かっている相手に、ニックネームで当てにいってはいけない。
+    """
+    first = _session(db, "先週")
+    sessions_service.import_participants(db, first, [_participant(1, "マッツ")])
+    member = sessions_service.list_members(db, first.id)[0]
+    sessions_service.update_member(db, member, level=Level.BEGINNER)
+
+    second = _session(db, "今週")
+    sessions_service.import_participants(
+        db, second, [_participant(2, "マッツ", level=Level.PICKLEBALL)]
+    )
+    other = sessions_service.list_members(db, second.id)[0]
+    assert other.level is Level.PICKLEBALL, "別人の直したレベルを被っている"
+
+
+def test_the_same_person_twice_is_added_once(db):
+    """同じ人が2回出てきても1人。
+
+    幽霊メンバーができると、毎ラウンド出場枠を1つ食い、統計も歪む。
+    """
+    session = _session(db)
+    result = sessions_service.import_participants(
+        db, session, [_participant(7, "たろう"), _participant(7, "たろう")]
+    )
+    assert result.added == ["たろう"]
+    assert len(sessions_service.list_members(db, session.id)) == 1
+
+
+def test_a_nickname_fixed_by_hand_is_kept(db):
+    """管理者が読み上げ用に付け直した名前を、取り込みで戻さない。
+
+    上流の名前が変わったときだけ追従する。
+    """
+    session = _session(db)
+    sessions_service.import_participants(db, session, [_participant(9, "とても長い表示名")])
+    member = sessions_service.list_members(db, session.id)[0]
+    sessions_service.update_member(db, member, nickname="たろう")
+
+    result = sessions_service.import_participants(
+        db, session, [_participant(9, "とても長い表示名")]
+    )
+    assert result.renamed == []
+    db.refresh(member)
+    assert member.nickname == "たろう", "手で付けた名前が戻っている"
+
+
+def test_an_upstream_rename_is_followed(db):
+    """上流で改名されたら追従する。"""
+    session = _session(db)
+    sessions_service.import_participants(db, session, [_participant(9, "旧名")])
+    result = sessions_service.import_participants(db, session, [_participant(9, "新名")])
+    assert result.renamed == [("旧名", "新名")]
+
+
+def test_someone_who_left_the_event_is_put_to_rest(db):
+    """一覧から消えた人は休憩にする。削除はしない（統計が壊れる）。"""
+    session = _session(db)
+    sessions_service.import_participants(
+        db, session, [_participant(1, "残る人"), _participant(2, "抜ける人")]
+    )
+    result = sessions_service.import_participants(db, session, [_participant(1, "残る人")])
+    assert result.resting == ["抜ける人"]
+    left = next(
+        m for m in sessions_service.list_members(db, session.id) if m.nickname == "抜ける人"
+    )
+    assert left.status is MemberStatus.RESTING
+    assert left.id is not None, "消してはいけない"
+
+
+def test_a_failed_import_leaves_nothing_behind(db):
+    """途中で失敗したら、誰も登録されない。
+
+    1人ずつコミットしていると「先頭の数人だけ入った」状態が残る。
+    """
+    session = _session(db)
+    people = [_participant(1, "先の人"), _participant(2, "   ")]
+    with pytest.raises(ValidationError):
+        sessions_service.import_participants(db, session, people)
+    db.rollback()
+    assert sessions_service.list_members(db, session.id) == []
+
+
+def test_a_truncated_page_is_reported_not_crashed():
+    """応答が途中で切れていても 500 にしない。"""
+    broken = sample_html().split("</script>")[0]
+    with pytest.raises(UpstreamError):
+        parse_event_page(broken)
+
+
+# ---------------------------------------------------------------------------
+# API 層（ネットワークには触らない。取得だけ差し替える）
+# ---------------------------------------------------------------------------
+
+
+def _fake_fetch(monkeypatch, html: str | None = None, error: Exception | None = None):
+    def fake(event_id, *, base_url, timeout):
+        if error is not None:
+            raise error
+        return html
+
+    monkeypatch.setattr("app.api.tennisbear.fetch_event_page", fake)
+
+
+def test_import_endpoint_returns_a_summary(client, monkeypatch):
+    from tests.test_api import create_session
+
+    _fake_fetch(monkeypatch, sample_html())
+    token = create_session(client)["token"]
+    response = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": 1}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["added"]) == 18
+    assert body["unchanged"] == 0
+    assert body["renamed"] == []
+    assert body["resting"] == []
+    assert len(client.get(f"/api/sessions/{token}/members").json()) == 18
+
+
+def test_importing_twice_through_the_api(client, monkeypatch):
+    from tests.test_api import create_session
+
+    _fake_fetch(monkeypatch, sample_html())
+    token = create_session(client)["token"]
+    client.post(f"/api/sessions/{token}/members/import", json={"event_id": 1})
+    again = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": 1}
+    ).json()
+    assert again["added"] == []
+    assert again["unchanged"] == 18
+
+
+def test_an_unreadable_page_becomes_502(client, monkeypatch):
+    """取り込めなかったことを、そうと分かる形で返す。"""
+    from tests.test_api import create_session
+
+    _fake_fetch(monkeypatch, "<html>参加者はいません</html>")
+    token = create_session(client)["token"]
+    response = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": 1}
+    )
+    assert response.status_code == 502
+    assert response.json()["code"] == "upstream"
+
+
+def test_a_network_failure_becomes_502(client, monkeypatch):
+    from tests.test_api import create_session
+
+    _fake_fetch(monkeypatch, error=UpstreamError("イベントページに接続できませんでした"))
+    token = create_session(client)["token"]
+    response = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": 1}
+    )
+    assert response.status_code == 502
+
+
+def test_a_non_numeric_event_id_is_refused(client):
+    from tests.test_api import create_session
+
+    token = create_session(client)["token"]
+    response = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": "abc"}
+    )
+    assert response.status_code == 422

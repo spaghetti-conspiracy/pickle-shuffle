@@ -44,6 +44,13 @@ def _enum_column(enum_cls: type) -> SAEnum:
     )
 
 
+NICKNAME_MAX = 50
+"""ニックネームの長さの上限。列の長さと入力の検証で同じ値を使う。"""
+
+NAME_MAX = 100
+"""練習会名とコート名の上限。"""
+
+
 def utcnow() -> datetime:
     """タイムゾーン付きの現在時刻。"""
     return datetime.now(timezone.utc)
@@ -169,6 +176,15 @@ class Member(Base):
     再取り込みのときに「もう登録済みか」を照合するために持つ。
     ニックネームは識別子ではない（不変則14）ので、名前では照合できない。
     画面には出さない。
+    """
+
+    tennisbear_nickname: Mapped[str | None] = mapped_column(
+        String(50), default=None
+    )
+    """最後に取り込んだときの、tennisbear 側の呼び名。
+
+    管理者が読み上げ用に付け直した名前を、取り込みのたびに戻さないために持つ。
+    上流が変わったときだけ追従する。
     """
 
     baseline: Mapped[int] = mapped_column(Integer, default=0)

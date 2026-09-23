@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models import NAME_MAX, NICKNAME_MAX
 from app.scheduler.domain import Gender, Level, MemberStatus, RoundStatus
 
 
@@ -18,11 +19,10 @@ class CourtOut(BaseModel):
     in_use: bool
 
 
-#: 入力の長さの上限。DB の VARCHAR と揃える。SQLite は長さを無視するので、
-#: ここで止めないとローカルでは通って PostgreSQL の本番だけ 500 になる。
-NAME_MAX = 100
-NICKNAME_MAX = 50
-COURT_NAME_MAX = 50
+#: 入力の長さの上限。列の長さ（app/models.py）と同じ値を使う。
+#: SQLite は VARCHAR の長さを無視するので、ここで止めないとローカルでは
+#: 通って PostgreSQL の本番だけ 500 になる。
+COURT_NAME_MAX = NICKNAME_MAX
 
 
 class CourtUpdate(BaseModel):
@@ -69,6 +69,9 @@ class ImportResultOut(BaseModel):
 
     unchanged: int
     """すでに登録済みで、変更が無かった人数。"""
+
+    resting: list[str]
+    """一覧から居なくなったので休憩にした人。削除はしない。"""
 
 
 class MemberCreate(BaseModel):

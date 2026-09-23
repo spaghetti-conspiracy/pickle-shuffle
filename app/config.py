@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from app.scheduler.domain import Weights
 
 DEFAULT_DATABASE_URL = "sqlite:///./data/app.db"
+DEFAULT_TENNISBEAR_URL = "https://www.tennisbear.net"
 
 IS_SERVERLESS = bool(os.environ.get("VERCEL"))
 """Vercel などのサーバーレス環境で動いているか。
@@ -30,7 +31,7 @@ class Settings:
     スマートフォンから届かない。そういうときにここで上書きする。
     例: ``http://192.168.1.10:8000``
     """
-    tennisbear_base_url: str = "https://www.tennisbear.net"
+    tennisbear_base_url: str = DEFAULT_TENNISBEAR_URL
     """参加者の取り込み元。差し替えられるようにしておく（テストと、URL 変更に備えて）。"""
 
     tennisbear_timeout: float = 10.0
@@ -64,8 +65,9 @@ def load_settings() -> Settings:
         port=_env_int("PORT", 8000),
         public_base_url=(os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/"),
         tennisbear_base_url=(
-            os.environ.get("TENNISBEAR_BASE_URL") or "https://www.tennisbear.net"
+            os.environ.get("TENNISBEAR_BASE_URL") or DEFAULT_TENNISBEAR_URL
         ).strip().rstrip("/"),
+        tennisbear_timeout=_env_int("TENNISBEAR_TIMEOUT", 10),
         fairness_slack=_env_int("FAIRNESS_SLACK", 0),
         lookahead=_env_int("LOOKAHEAD", 1),
         beam=_env_int("BEAM", 16),

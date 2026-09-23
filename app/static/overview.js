@@ -117,7 +117,7 @@ function renderMemberUrl(url) {
 
 function render(data) {
   const highlightBeginners = data.session.highlight_beginners;
-  document.title = `${data.session.name} — 全体表示`;
+  document.title = `${data.session.name} — 全体表示 — Pickle Shuffle`;
   $("session-name").textContent = data.session.name;
   $("admin-link").href = `/manage.html?session=${sessionToken}`;
 

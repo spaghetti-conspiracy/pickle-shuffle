@@ -212,7 +212,8 @@ function renderClock() {
     return;
   }
   if (!clock.hasLimit()) {
-    element.textContent = `経過 ${formatClock(clock.elapsed())}`;
+    // 見出しに「経過時間」と出ているので、数字だけでよい。
+    element.textContent = formatClock(clock.elapsed());
     element.dataset.state = state === "paused" ? "paused" : "running";
     return;
   }

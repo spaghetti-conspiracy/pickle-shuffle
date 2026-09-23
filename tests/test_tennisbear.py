@@ -171,7 +171,7 @@ def _participant(user_id, nickname, gender=Gender.MALE, level=Level.PICKLEBALL):
 def test_import_adds_everyone(db):
     session = _session(db)
     people = parse_event_page(sample_html())
-    result = sessions_service.import_participants(db, session, people)
+    result = sessions_service.import_participants(db, session, people, event_id=None)
     assert len(result.added) == len(people)
     assert result.unchanged == 0
     members = sessions_service.list_members(db, session.id)
@@ -182,8 +182,8 @@ def test_importing_twice_adds_nobody(db):
     """再取り込みしても増えない。ID で見分ける。"""
     session = _session(db)
     people = parse_event_page(sample_html())
-    sessions_service.import_participants(db, session, people)
-    again = sessions_service.import_participants(db, session, people)
+    sessions_service.import_participants(db, session, people, event_id=None)
+    again = sessions_service.import_participants(db, session, people, event_id=None)
     assert again.added == []
     assert again.unchanged == len(people)
     assert len(sessions_service.list_members(db, session.id)) == len(people)
@@ -197,7 +197,7 @@ def test_reimport_keeps_what_the_organiser_fixed(db):
     """
     session = _session(db)
     people = parse_event_page(sample_html())
-    sessions_service.import_participants(db, session, people)
+    sessions_service.import_participants(db, session, people, event_id=None)
     target = next(p for p in people if p.level is Level.PICKLEBALL)
     member = next(
         m
@@ -206,7 +206,7 @@ def test_reimport_keeps_what_the_organiser_fixed(db):
     )
     sessions_service.update_member(db, member, level=Level.BEGINNER, gender=Gender.FEMALE)
 
-    sessions_service.import_participants(db, session, people)
+    sessions_service.import_participants(db, session, people, event_id=None)
 
     db.refresh(member)
     assert member.level is Level.BEGINNER, "直したレベルが戻っている"
@@ -216,9 +216,10 @@ def test_reimport_keeps_what_the_organiser_fixed(db):
 def test_a_renamed_participant_is_renamed_here_too(db):
     """呼び名が変わったら追従する。古い名前で読み上げると混乱する。"""
     session = _session(db)
-    sessions_service.import_participants(db, session, [_participant(2001, "旧名")])
+    sessions_service.import_participants(db, session, [_participant(2001, "旧名")], event_id=None)
     result = sessions_service.import_participants(
-        db, session, [_participant(2001, "新名")]
+        db, session, [_participant(2001, "新名")],
+        event_id=None,
     )
     assert result.renamed == [("旧名", "新名")]
     assert [m.nickname for m in sessions_service.list_members(db, session.id)] == ["新名"]
@@ -231,6 +232,7 @@ def test_same_names_get_a_number(db):
         db,
         session,
         [_participant(3001, "マッツ"), _participant(3002, "マッツ"), _participant(3003, "マッツ")],
+        event_id=None,
     )
     assert result.added == ["マッツ", "マッツ2", "マッツ3"]
 
@@ -239,10 +241,12 @@ def test_renaming_into_a_taken_name_also_gets_a_number(db):
     """改名先がすでに使われていたら、そこでも番号を振る。"""
     session = _session(db)
     sessions_service.import_participants(
-        db, session, [_participant(4001, "マッツ"), _participant(4002, "別人")]
+        db, session, [_participant(4001, "マッツ"), _participant(4002, "別人")],
+        event_id=None,
     )
     result = sessions_service.import_participants(
-        db, session, [_participant(4001, "マッツ"), _participant(4002, "マッツ")]
+        db, session, [_participant(4001, "マッツ"), _participant(4002, "マッツ")],
+        event_id=None,
     )
     assert result.renamed == [("別人", "マッツ2")]
 
@@ -253,13 +257,14 @@ def test_attributes_come_back_from_a_previous_session(db):
     `member_profiles` を tennisbear の ID で引くので、改名されても見失わない。
     """
     first = _session(db, "先週")
-    sessions_service.import_participants(db, first, [_participant(5001, "だれか")])
+    sessions_service.import_participants(db, first, [_participant(5001, "だれか")], event_id=None)
     member = sessions_service.list_members(db, first.id)[0]
     sessions_service.update_member(db, member, level=Level.BEGINNER)
 
     second = _session(db, "今週")
     sessions_service.import_participants(
-        db, second, [_participant(5001, "だれか改", level=Level.PICKLEBALL)]
+        db, second, [_participant(5001, "だれか改", level=Level.PICKLEBALL)],
+        event_id=None,
     )
     imported = sessions_service.list_members(db, second.id)[0]
     assert imported.level is Level.BEGINNER, "前回直したレベルが使われていない"
@@ -279,7 +284,8 @@ def test_a_returning_participant_does_not_break_the_import(db):
     """
     first = _session(db, "先週")
     sessions_service.import_participants(
-        db, first, [_participant(1, "マッツ"), _participant(2, "マッツ")]
+        db, first, [_participant(1, "マッツ"), _participant(2, "マッツ")],
+        event_id=None,
     )
     assert [m.nickname for m in sessions_service.list_members(db, first.id)] == [
         "マッツ",
@@ -288,7 +294,10 @@ def test_a_returning_participant_does_not_break_the_import(db):
 
     # 今週は2人目だけが参加する
     second = _session(db, "今週")
-    result = sessions_service.import_participants(db, second, [_participant(2, "マッツ")])
+    result = sessions_service.import_participants(
+        db, second, [_participant(2, "マッツ")],
+        event_id=None,
+    )
     assert result.added == ["マッツ"], "取り込みが失敗している"
 
 
@@ -298,13 +307,14 @@ def test_a_namesake_does_not_inherit_someone_elses_level(db):
     ID が分かっている相手に、ニックネームで当てにいってはいけない。
     """
     first = _session(db, "先週")
-    sessions_service.import_participants(db, first, [_participant(1, "マッツ")])
+    sessions_service.import_participants(db, first, [_participant(1, "マッツ")], event_id=None)
     member = sessions_service.list_members(db, first.id)[0]
     sessions_service.update_member(db, member, level=Level.BEGINNER)
 
     second = _session(db, "今週")
     sessions_service.import_participants(
-        db, second, [_participant(2, "マッツ", level=Level.PICKLEBALL)]
+        db, second, [_participant(2, "マッツ", level=Level.PICKLEBALL)],
+        event_id=None,
     )
     other = sessions_service.list_members(db, second.id)[0]
     assert other.level is Level.PICKLEBALL, "別人の直したレベルを被っている"
@@ -317,7 +327,8 @@ def test_the_same_person_twice_is_added_once(db):
     """
     session = _session(db)
     result = sessions_service.import_participants(
-        db, session, [_participant(7, "たろう"), _participant(7, "たろう")]
+        db, session, [_participant(7, "たろう"), _participant(7, "たろう")],
+        event_id=None,
     )
     assert result.added == ["たろう"]
     assert len(sessions_service.list_members(db, session.id)) == 1
@@ -329,12 +340,16 @@ def test_a_nickname_fixed_by_hand_is_kept(db):
     上流の名前が変わったときだけ追従する。
     """
     session = _session(db)
-    sessions_service.import_participants(db, session, [_participant(9, "とても長い表示名")])
+    sessions_service.import_participants(
+        db, session, [_participant(9, "とても長い表示名")],
+        event_id=None,
+    )
     member = sessions_service.list_members(db, session.id)[0]
     sessions_service.update_member(db, member, nickname="たろう")
 
     result = sessions_service.import_participants(
-        db, session, [_participant(9, "とても長い表示名")]
+        db, session, [_participant(9, "とても長い表示名")],
+        event_id=None,
     )
     assert result.renamed == []
     db.refresh(member)
@@ -344,8 +359,11 @@ def test_a_nickname_fixed_by_hand_is_kept(db):
 def test_an_upstream_rename_is_followed(db):
     """上流で改名されたら追従する。"""
     session = _session(db)
-    sessions_service.import_participants(db, session, [_participant(9, "旧名")])
-    result = sessions_service.import_participants(db, session, [_participant(9, "新名")])
+    sessions_service.import_participants(db, session, [_participant(9, "旧名")], event_id=None)
+    result = sessions_service.import_participants(
+        db, session, [_participant(9, "新名")],
+        event_id=None,
+    )
     assert result.renamed == [("旧名", "新名")]
 
 
@@ -353,9 +371,13 @@ def test_someone_who_left_the_event_is_put_to_rest(db):
     """一覧から消えた人は休憩にする。削除はしない（統計が壊れる）。"""
     session = _session(db)
     sessions_service.import_participants(
-        db, session, [_participant(1, "残る人"), _participant(2, "抜ける人")]
+        db, session, [_participant(1, "残る人"), _participant(2, "抜ける人")],
+        event_id=None,
     )
-    result = sessions_service.import_participants(db, session, [_participant(1, "残る人")])
+    result = sessions_service.import_participants(
+        db, session, [_participant(1, "残る人")],
+        event_id=None,
+    )
     assert result.resting == ["抜ける人"]
     left = next(
         m for m in sessions_service.list_members(db, session.id) if m.nickname == "抜ける人"
@@ -372,7 +394,7 @@ def test_a_failed_import_leaves_nothing_behind(db):
     session = _session(db)
     people = [_participant(1, "先の人"), _participant(2, "   ")]
     with pytest.raises(ValidationError):
-        sessions_service.import_participants(db, session, people)
+        sessions_service.import_participants(db, session, people, event_id=None)
     db.rollback()
     assert sessions_service.list_members(db, session.id) == []
 
@@ -493,3 +515,130 @@ def test_the_same_event_can_be_imported_again(db):
     )
     assert result.added == ["あとの人"]
     assert result.resting == []
+
+
+def test_a_failed_import_does_not_bind_the_event(db):
+    """取り込みに失敗したイベントには紐づけない。
+
+    ここで縛ってしまうと、打ち間違えたIDが1回の失敗で居座り、
+    本当に取り込みたいイベントが二度と入らなくなる。
+    """
+    session = _session(db)
+    with pytest.raises(ValidationError):
+        sessions_service.import_participants(
+            db, session, [_participant(1, "   ")], event_id=111
+        )
+    db.rollback()
+    assert session.tennisbear_event_id is None
+    sessions_service.import_participants(
+        db, session, [_participant(1, "だれか")], event_id=222
+    )
+    assert session.tennisbear_event_id == 222
+
+
+def test_a_refused_import_changes_nothing(db):
+    """別イベントを断っても、いま居る人には指一本触れない。
+
+    この機能の動機がそこにある。断ったつもりで全員が休憩へ回っていたら
+    元も子もないので、人数・状態・取り込み元を直接見る。
+    """
+    session = _session(db)
+    sessions_service.import_participants(
+        db, session, [_participant(1, "先の人"), _participant(2, "あとの人")], event_id=111
+    )
+    before = {
+        member.nickname: member.status
+        for member in sessions_service.list_members(db, session.id)
+    }
+
+    with pytest.raises(ValidationError):
+        sessions_service.import_participants(
+            db, session, [_participant(3, "よその人")], event_id=222
+        )
+    db.rollback()
+
+    after = {
+        member.nickname: member.status
+        for member in sessions_service.list_members(db, session.id)
+    }
+    assert after == before
+    assert all(status is MemberStatus.ACTIVE for status in after.values())
+    assert session.tennisbear_event_id == 111
+
+
+def test_the_api_refuses_another_event(client, monkeypatch):
+    """API でも別イベントは 422 で断り、理由を日本語で返す。"""
+    from tests.test_api import create_session
+
+    _fake_fetch(monkeypatch, sample_html())
+    token = create_session(client)["token"]
+    first = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": 111}
+    )
+    assert first.status_code == 200, first.text
+    count = len(client.get(f"/api/sessions/{token}/members").json())
+
+    response = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": 222}
+    )
+    assert response.status_code == 422
+    assert "別のイベントは取り込めません" in response.json()["detail"]
+    assert len(client.get(f"/api/sessions/{token}/members").json()) == count
+
+
+def test_another_event_is_refused_before_fetching(client, monkeypatch):
+    """断ると分かっているイベントを取りに行かない。
+
+    実在しないIDだと取得の失敗が先に返り、本当の理由が伝わらなくなる。
+    """
+    fetched: list[int] = []
+
+    def fake(event_id, *, base_url, timeout):
+        fetched.append(event_id)
+        return sample_html()
+
+    monkeypatch.setattr("app.api.tennisbear.fetch_event_page", fake)
+    from tests.test_api import create_session
+
+    token = create_session(client)["token"]
+    client.post(f"/api/sessions/{token}/members/import", json={"event_id": 111})
+    assert fetched == [111]
+
+    response = client.post(
+        f"/api/sessions/{token}/members/import", json={"event_id": 222}
+    )
+    assert response.status_code == 422
+    assert fetched == [111], "断るイベントのページを取りに行っている"
+
+
+def test_two_devices_cannot_bind_different_events(db, session_factory):
+    """2台から同時に初めての取り込みを押しても、紐づくイベントは1つ。
+
+    在メモリの値を見てから書くと、どちらもまだ「紐づいていない」と思って
+    いるので両方が通り、あとから押した側の一覧に居ない人が休憩へ回る。
+    """
+    from app.models import PracticeSession
+
+    session = _session(db)
+    db.commit()
+
+    left, right = session_factory(), session_factory()
+    seen_by_left = left.get(PracticeSession, session.id)
+    seen_by_right = right.get(PracticeSession, session.id)
+    assert seen_by_right.tennisbear_event_id is None
+
+    sessions_service.import_participants(
+        left, seen_by_left, [_participant(1, "先の人")], event_id=111
+    )
+
+    with pytest.raises(ValidationError):
+        sessions_service.import_participants(
+            right, seen_by_right, [_participant(2, "よその人")], event_id=222
+        )
+    right.rollback()
+
+    db.expire_all()
+    assert db.get(PracticeSession, session.id).tennisbear_event_id == 111
+    members = sessions_service.list_members(db, session.id)
+    assert [member.nickname for member in members] == ["先の人"]
+    assert all(member.status is MemberStatus.ACTIVE for member in members)

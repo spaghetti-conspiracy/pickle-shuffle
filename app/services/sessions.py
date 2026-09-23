@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -424,11 +424,53 @@ def unique_nickname(base: str, taken: set[str]) -> str:
         number += 1
 
 
+def check_event(session: PracticeSession, event_id: int) -> None:
+    """取り込み元が食い違っていないかだけを見る。書き換えはしない。
+
+    イベントページを取りに行く前に呼ぶ。打ち間違えたIDで外へ出ていくと、
+    「見つかりませんでした」が先に返ってしまい、本当の理由（別のイベントは
+    取り込めない）が伝わらない。
+    """
+    bound = session.tennisbear_event_id
+    if bound is not None and bound != event_id:
+        raise ValidationError(
+            f"この練習会はイベント {bound} から取り込んでいます。別のイベントは取り込めません。"
+        )
+
+
+def _bind_event(db: Session, session: PracticeSession, event_id: int) -> None:
+    """この練習会の取り込み元を、最初のイベントに確定する。
+
+    読んでから書くと、2つの端末が同時に初めての取り込みを押したときに
+    両方が通ってしまう。まだ紐づいていない行だけを WHERE で狙い、
+    更新できた行数で「自分が確定させたか」を判定する。
+    """
+    if session.tennisbear_event_id is None:
+        claimed = (
+            db.execute(
+                update(PracticeSession)
+                .where(
+                    PracticeSession.id == session.id,
+                    PracticeSession.tennisbear_event_id.is_(None),
+                )
+                .values(tennisbear_event_id=event_id)
+            ).rowcount
+            == 1
+        )
+        if claimed:
+            session.tennisbear_event_id = event_id
+            return
+        # 別の端末が先に確定させた。今の値で判定し直す。
+        db.refresh(session)
+    check_event(session, event_id)
+
+
 def import_participants(
     db: Session,
     session: PracticeSession,
     participants: list[Participant],
-    event_id: int | None = None,
+    *,
+    event_id: int | None,
 ) -> ImportResult:
     """イベントの参加者を練習会に取り込む。
 
@@ -448,13 +490,7 @@ def import_participants(
     黙って起きると事故になる。
     """
     if event_id is not None:
-        if session.tennisbear_event_id is None:
-            session.tennisbear_event_id = event_id
-        elif session.tennisbear_event_id != event_id:
-            raise ValidationError(
-                f"この練習会はイベント {session.tennisbear_event_id} から取り込んでいます。"
-                "別のイベントは取り込めません。"
-            )
+        _bind_event(db, session, event_id)
     existing = list(
         db.scalars(select(Member).where(Member.session_id == session.id))
     )

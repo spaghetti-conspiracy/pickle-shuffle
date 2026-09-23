@@ -73,6 +73,14 @@ select {
   background: #11161c;
 }
 
+/* 書き換えられない欄。押しても何も起きない理由が、見て分かるようにする。 */
+input[readonly] {
+  background: #0b0f13;
+  color: var(--muted);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
 a {
   color: var(--accent);
 }

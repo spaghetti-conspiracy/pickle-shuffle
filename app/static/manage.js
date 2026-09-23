@@ -35,7 +35,8 @@ async function loadSession() {
     event.value = String(session.tennisbear_event_id);
     event.readOnly = true;
     $("import-note").textContent =
-      "この練習会はこのイベントから取り込んでいます。押すと最新の参加者を取り込みます。";
+      "この練習会はこのイベントから取り込んでいます。押すと最新の参加者を取り込みます。" +
+      "取り込み元は変えられません。間違えたときは練習会を作り直してください。";
   } else {
     event.readOnly = false;
     $("import-note").textContent = "";
@@ -300,6 +301,8 @@ $("import-members").addEventListener("click", async () => {
   } catch (error) {
     result.textContent = "";
     showError(error.message);
+    // 別の端末が先に取り込み元を決めていることがある。今の状態を出し直す。
+    await loadSession().catch(() => {});
   } finally {
     button.disabled = false;
   }

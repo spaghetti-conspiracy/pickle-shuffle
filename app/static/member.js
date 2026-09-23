@@ -44,13 +44,24 @@ function restoreCourt() {
   }
 }
 
+/** 名前の色分け。男女の区分が一目で分かるようにする。
+ *
+ * 初心者を緑にするかどうかは練習会の設定で切り替える。緑はアルゴリズムの
+ * 確認用で、ふだんは男女の区分だけで色を付ける。
+ */
+function toneOf(player, highlightBeginners) {
+  if (highlightBeginners && player.level === "beginner") return "beginner";
+  return player.gender;
+}
+
 /** 名前を1行に収める。長い名前は文字数に応じて縮める。 */
-function playerLabel(nickname) {
+function playerLabel(player, highlightBeginners) {
   const label = document.createElement("div");
   label.className = "player";
-  label.textContent = nickname;
+  label.textContent = player.nickname;
+  label.dataset.tone = toneOf(player, highlightBeginners);
   // 全角1文字をほぼ1em とみなし、収まる大きさを CSS 側で逆算させる。
-  label.style.setProperty("--len", String(Math.max(nickname.length, 3)));
+  label.style.setProperty("--len", String(Math.max(player.nickname.length, 3)));
   return label;
 }
 
@@ -74,7 +85,7 @@ function renderTabs(courts) {
   }
 }
 
-function renderCourt(court) {
+function renderCourt(court, highlightBeginners) {
   const container = $("court");
   container.innerHTML = "";
 
@@ -101,13 +112,14 @@ function renderCourt(court) {
     const side = document.createElement("div");
     side.className = "member-team";
     for (const player of team) {
-      side.append(playerLabel(player.nickname));
+      side.append(playerLabel(player, highlightBeginners));
     }
     container.append(side);
   }
 }
 
 function render(data) {
+  const highlightBeginners = data.session.highlight_beginners;
   document.title = `${data.session.name} — コート表示`;
   $("session-name").textContent = data.session.name;
   $("status").textContent = data.round_status === "adopted" ? "試合中" : "次のマッチ";
@@ -117,7 +129,7 @@ function render(data) {
     selectedCourtId = courts.length ? courts[0].id : null;
   }
   renderTabs(courts);
-  renderCourt(courts.find((c) => c.id === selectedCourtId));
+  renderCourt(courts.find((c) => c.id === selectedCourtId), highlightBeginners);
 
   const waiting = data.waiting.map((p) => p.nickname);
   const resting = data.resting.map((p) => p.nickname);

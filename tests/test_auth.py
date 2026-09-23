@@ -288,3 +288,38 @@ def test_a_real_admin_is_not_overwritten(db, monkeypatch):
     db.refresh(real)
     assert real.password_hash == kept, "本物の管理者を書き換えている"
     assert owners.authenticate(db, "本物の合言葉").login == "honmono"
+
+
+def test_failed_logins_do_not_cost_extra_hashing(db, monkeypatch):
+    """**失敗を繰り返されても、費用が増えないこと。**
+
+    `/api/login` は合言葉を要さない入口なので、外から何度でも叩かれる。
+    失敗のたびに「環境変数が変わっていないか」を確かめ直すと、pbkdf2 を
+    20万回**余計に**まわすことになり、無料枠の実行時間をそのぶん速く焼く。
+    突き合わせは、同じ環境変数に対してはプロセスごとに一度でよい。
+    """
+    import app.services.owners as owners
+
+    monkeypatch.setattr(owners, "_synced_password", None)
+
+    calls: list[int] = [0]
+    real = owners.verify_password
+
+    def counting(password: str, stored: str) -> bool:
+        calls[0] += 1
+        return real(password, stored)
+
+    monkeypatch.setattr(owners, "verify_password", counting)
+
+    with pytest.raises(UnauthorizedError):
+        owners.authenticate(db, "ちがう合言葉")
+    first = calls[0]
+
+    calls[0] = 0
+    for _ in range(3):
+        with pytest.raises(UnauthorizedError):
+            owners.authenticate(db, "ちがう合言葉")
+    repeated = calls[0]
+
+    assert repeated == 3, f"1回の失敗につき照合1回で済んでいない: {repeated}回/3回"
+    assert repeated < first * 3, "失敗のたびに作り直しを試している"

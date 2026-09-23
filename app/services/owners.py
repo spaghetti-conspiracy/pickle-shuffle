@@ -23,6 +23,15 @@ from app.models import Admin, Owner, OwnerAdmin
 DEFAULT_OWNER_NAME = "既定の団体"
 BOOTSTRAP_LOGIN = "admin"
 
+_synced_password: str | None = None
+"""このプロセスで、DB のハッシュと突き合わせ済みの `ADMIN_PASSWORD`。
+
+`/api/login` は合言葉を要さない入口なので、外から何度でも叩かれる。
+失敗のたびに作り直しを試すと pbkdf2 を20万回**余計に**まわすことになり、
+無料枠の実行時間をそのぶん速く焼く。一度突き合わせたら、環境変数が
+変わるまで見ない（変われば値が違うので、また見る）。
+"""
+
 
 def ensure_bootstrap(db: Session) -> Owner:
     """既定の団体と、環境変数から作る固定の管理者を用意する。
@@ -52,6 +61,9 @@ def ensure_bootstrap(db: Session) -> Owner:
     elif not verify_password(settings.admin_password, admin.password_hash):
         # 環境変数が変わった。古いクッキーはハッシュごと変わるので無効になる。
         admin.password_hash = hash_password(settings.admin_password)
+
+    global _synced_password
+    _synced_password = settings.admin_password
 
     link = db.get(OwnerAdmin, (owner.id, admin.id))
     if link is None:
@@ -87,17 +99,29 @@ def _refresh_bootstrap_password(db: Session) -> Admin | None:
 
     すでに一致していれば何もしない（作り直す必要が無い）。
     本物の管理者を登録したあとの行は触らない。
+
+    **同じ環境変数に対しては、プロセスごとに一度しか確かめない。**
+    ここは合言葉を要さない入口から呼ばれるので、失敗のたびに pbkdf2 を
+    まわすと、外から実行時間を焼かれる。
     """
+    global _synced_password
+    if _synced_password == settings.admin_password:
+        # このプロセスで突き合わせ済み。合わなかったのは合言葉のほう。
+        return None
+
     admin = db.scalars(
         select(Admin).where(Admin.is_bootstrap.is_(True)).order_by(Admin.id)
     ).first()
     if admin is None:
+        _synced_password = settings.admin_password
         return None
     if verify_password(settings.admin_password, admin.password_hash):
+        _synced_password = settings.admin_password
         return None  # 変わっていない
     admin.password_hash = hash_password(settings.admin_password)
     db.commit()
     db.refresh(admin)
+    _synced_password = settings.admin_password
     return admin
 
 

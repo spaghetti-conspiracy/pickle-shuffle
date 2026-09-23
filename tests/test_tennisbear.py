@@ -1,10 +1,14 @@
 """tennisbear のイベントページの解析と、練習会への取り込み。
 
-ネットワークには触らない。取得は差し替え、解析は保存した架空のページで確かめる。
-"""
+ネットワークには触らない。解析は保存したページで確かめる。
+
+フィクスチャは**実際のイベントページから作った**ものに、氏名・ユーザID・画像URLだけ
+差し替えを入れてある。埋め込まれた状態の形（短縮変数を含む）と、レベル・性別の
+分布は実物のまま。実際にどういう顔ぶれだったか分かっているので、期待値に使える。"""
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -18,11 +22,17 @@ from app.tennisbear import (
     parse_event_page,
 )
 
-FIXTURE = Path(__file__).parent / "fixtures" / "tennisbear_event.html"
+FIXTURES = Path(__file__).parent / "fixtures"
+
+#: 終了したイベント。顔ぶれと結果が分かっているので期待値に使える。
+FINISHED = FIXTURES / "tennisbear_event.html"
+
+#: 開催前のイベント。終了後とページの作りが違う可能性があるので別に押さえる。
+UPCOMING = FIXTURES / "tennisbear_event_upcoming.html"
 
 
 def sample_html() -> str:
-    return FIXTURE.read_text(encoding="utf-8")
+    return FINISHED.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -57,42 +67,73 @@ def test_levels_map_to_the_apps_three_steps(tennis, pickleball, expected):
 
 
 def test_parses_every_participant():
-    """参加者を取りこぼさない。"""
+    """参加者を取りこぼさず、キャンセル待ちを混ぜない。
+
+    この回は18名だった。ページには「キャンセル待ち」や「ブックマークした
+    プレイヤー」の欄もあるので、参加者だけを拾えているかを人数で見る。
+    """
     people = parse_event_page(sample_html())
-    assert [p.nickname for p in people] == [
-        "はじめ",
-        "ラケットさん",
-        "未設定さん",
-        "経験者",
-        "Emoji/スラッシュ🏓",
-    ]
-    assert [p.user_id for p in people] == [1001, 1002, 1003, 1004, 1005]
+    assert len(people) == 18
+    assert len({p.user_id for p in people}) == 18, "同じ人を2回拾っている"
+    assert all(p.nickname for p in people), "名前を取り出せていない人がいる"
 
 
-def test_reads_gender_and_level():
-    people = {p.nickname: p for p in parse_event_page(sample_html())}
-    assert people["はじめ"].gender is Gender.MALE
-    assert people["ラケットさん"].gender is Gender.FEMALE
-    assert people["はじめ"].level is Level.BEGINNER
-    assert people["ラケットさん"].level is Level.RACKET_EXPERIENCED
-    assert people["経験者"].level is Level.PICKLEBALL
+def test_reads_gender_and_level_as_they_were():
+    """実際の顔ぶれと同じ内訳になる。
+
+    この回は 初心者1・ラケット経験者2・ピックルボール経験者15、
+    男性12・女性6 だった。
+    """
+    people = parse_event_page(sample_html())
+    levels = Counter(p.level for p in people)
+    assert levels[Level.BEGINNER] == 1
+    assert levels[Level.RACKET_EXPERIENCED] == 2
+    assert levels[Level.PICKLEBALL] == 15
+
+    genders = Counter(p.gender for p in people)
+    assert genders[Gender.MALE] == 12
+    assert genders[Gender.FEMALE] == 6
 
 
-def test_missing_values_fall_back_to_the_cautious_side():
-    """レベルも性別も未設定の人。
+def test_an_event_before_its_day_parses_too():
+    """開催前のイベントでも読める。
 
-    レベルは低い方に寄せる。初心者を取りこぼして「成立しない試合」が
-    できる方が、多めに拾って管理者が直すより害が大きい。
+    終了後のページだけで確かめると、当日までしか出ない欄（キャンセル待ちなど）が
+    あったときに気づけない。開催前のページも別に押さえておく。
+    """
+    people = parse_event_page(UPCOMING.read_text(encoding="utf-8"))
+    assert len(people) == 14
+    assert len({p.user_id for p in people}) == 14
+    assert all(p.nickname for p in people)
+    # この回は全員がピックルボール経験者だった
+    assert {p.level for p in people} == {Level.PICKLEBALL}
+
+
+def test_the_estimate_misses_someone_it_cannot_know_about():
+    """推定が外れる実例を残しておく。
+
+    この回の「参加者7」は、実際にはラケットスポーツ未経験だった。
+    しかし tennisbear のテニスレベルは「初中級」で登録されているので、
+    **どんな規則を書いてもここから未経験だとは分からない**。
+
+    取り込みはあくまで下書きで、管理者が直す前提。ここを忘れて
+    「取り込めば正しい」と思うと、初心者同士のペアができてしまう。
     """
     people = {p.nickname: p for p in parse_event_page(sample_html())}
-    assert people["未設定さん"].level is Level.BEGINNER
-    assert people["未設定さん"].gender is Gender.OTHER
+    estimated = people["参加者7"]
+    assert estimated.level is Level.RACKET_EXPERIENCED, "推定はラケット経験者になる"
+    # 実際は Level.BEGINNER だった。取り込み後に管理画面で直す。
 
 
-def test_escapes_and_emoji_survive():
-    """名前のエスケープを戻す。読み上げる名前なので化けさせない。"""
-    people = [p.nickname for p in parse_event_page(sample_html())]
-    assert "Emoji/スラッシュ🏓" in people
+def test_level_is_not_silently_defaulted():
+    """レベルを読めずに既定値へ落ちていないか。
+
+    読めないと全員が初心者側に倒れる。そうなっていたら、この回の内訳
+    （経験者が15名）が成り立たない。
+    """
+    people = parse_event_page(sample_html())
+    assert any(p.level is Level.PICKLEBALL for p in people)
+    assert any(p.level is not Level.PICKLEBALL for p in people)
 
 
 @pytest.mark.parametrize(
@@ -129,13 +170,12 @@ def _participant(user_id, nickname, gender=Gender.MALE, level=Level.PICKLEBALL):
 
 def test_import_adds_everyone(db):
     session = _session(db)
-    result = sessions_service.import_participants(
-        db, session, parse_event_page(sample_html())
-    )
-    assert len(result.added) == 5
+    people = parse_event_page(sample_html())
+    result = sessions_service.import_participants(db, session, people)
+    assert len(result.added) == len(people)
     assert result.unchanged == 0
     members = sessions_service.list_members(db, session.id)
-    assert {m.tennisbear_user_id for m in members} == {1001, 1002, 1003, 1004, 1005}
+    assert {m.tennisbear_user_id for m in members} == {p.user_id for p in people}
 
 
 def test_importing_twice_adds_nobody(db):
@@ -145,8 +185,8 @@ def test_importing_twice_adds_nobody(db):
     sessions_service.import_participants(db, session, people)
     again = sessions_service.import_participants(db, session, people)
     assert again.added == []
-    assert again.unchanged == 5
-    assert len(sessions_service.list_members(db, session.id)) == 5
+    assert again.unchanged == len(people)
+    assert len(sessions_service.list_members(db, session.id)) == len(people)
 
 
 def test_reimport_keeps_what_the_organiser_fixed(db):
@@ -158,10 +198,11 @@ def test_reimport_keeps_what_the_organiser_fixed(db):
     session = _session(db)
     people = parse_event_page(sample_html())
     sessions_service.import_participants(db, session, people)
+    target = next(p for p in people if p.level is Level.PICKLEBALL)
     member = next(
         m
         for m in sessions_service.list_members(db, session.id)
-        if m.tennisbear_user_id == 1004
+        if m.tennisbear_user_id == target.user_id
     )
     sessions_service.update_member(db, member, level=Level.BEGINNER, gender=Gender.FEMALE)
 

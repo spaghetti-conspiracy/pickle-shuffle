@@ -139,7 +139,7 @@ function render(data) {
   $("waiting").textContent = parts.join("　/　");
 }
 
-function setOffline(message) {
+function setNotice(message) {
   const element = $("offline");
   element.textContent = message;
   element.classList.toggle("hidden", !message);
@@ -150,7 +150,7 @@ async function refresh() {
   try {
     const data = await api.get(`/api/sessions/${sessionToken}/current`);
     if (gate.isStale(token)) return;
-    setOffline("");
+    setNotice("");
     lastData = data;
     // リーダーがマッチを進めたときだけ描き直す。
     if (data.revision !== lastRevision) {
@@ -163,7 +163,7 @@ async function refresh() {
     } else {
       // 一時的な通信の失敗。次のポーリングで復帰する見込みなので画面は残す。
       // #status を潰すと、今が試合中かどうかも分からなくなる。
-      setOffline(`通信できません（${error.message}）`);
+      setNotice(`通信できません（${error.message}）`);
     }
   } finally {
     document.body.dataset.ready = "1";

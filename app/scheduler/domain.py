@@ -15,25 +15,59 @@ class Gender(str, Enum):
 
 
 class Level(str, Enum):
-    """レベル区分。
-
-    仕様上「ルールがわからないラケットスポーツ経験者」は経験者と区別しないため、
-    生成ロジックでは :attr:`is_beginner` だけを見る。
-    """
+    """レベル区分。"""
 
     BEGINNER = "beginner"
-    """ルールがわからないラケットスポーツ未経験者。"""
+    """ルールがわからないラケットスポーツ未経験者。
+
+    一日やってもボールを返せるようにならないことが多く、ゲーム自体が成立しない。
+    """
 
     RACKET_EXPERIENCED = "racket_experienced"
-    """ルールがわからないラケットスポーツ経験者。生成上は経験者扱い。"""
+    """ルールがわからないラケットスポーツ経験者。
+
+    1試合が終わるころにはボールを相手コートに返せるようになり、ゲームは一応成立する。
+    慣れたと判断したら管理者がレベルを変更する。
+    """
 
     PICKLEBALL = "pickleball"
-    """ピックルボール経験者。"""
+    """ピックルボール経験者。ルールを知っている。"""
 
     @property
     def is_beginner(self) -> bool:
         """初心者（ラケットスポーツ未経験者）かどうか。"""
         return self is Level.BEGINNER
+
+    @property
+    def knows_rules(self) -> bool:
+        """ルールを覚えているか。"""
+        return self is Level.PICKLEBALL
+
+    @property
+    def strength(self) -> int:
+        """ペアの強さを見積もるための点数。
+
+        単純な大小は 初心者 < ラケット経験者 < ピックルボール経験者 だが、
+        初心者とラケット経験者の差は、ラケット経験者とピックルボール経験者の差より
+        ずっと大きい（3倍程度）。その比を整数で表すために 0 / 6 / 8 としてある
+        （男女の不均衡1人分が 2 に相当する尺度）。
+        """
+        return _LEVEL_STRENGTH[self]
+
+
+_LEVEL_STRENGTH = {
+    Level.BEGINNER: 0,
+    Level.RACKET_EXPERIENCED: 6,
+    Level.PICKLEBALL: 8,
+}
+
+#: 性別による加点。男性の方がパワーがあるぶん、やや有利と見る。
+#: 男女の不均衡1人分が、ラケット経験者とピックルボール経験者の差と同じくらい。
+_GENDER_STRENGTH = {
+    Gender.MALE: 2,
+    Gender.FEMALE: 0,
+    Gender.OTHER: 1,
+}
 
 
 class MemberStatus(str, Enum):
@@ -118,12 +152,20 @@ class Weights:
     fair: int = 100
     # 優先度3: 連続してマッチに入れない回数を最小にする
     sit_out: int = 120
-    # 優先度3: 初心者同士のペアを避ける（実質ハード制約）
+    # 優先度3: ルールを覚えていない者同士のペアを避ける。3段階。
+    # 初心者同士は実質ハード制約。ラケット経験者は1試合で慣れるので、より軽い。
     beginner_pair: int = 100_000
+    beginner_racket_pair: int = 20_000
+    racket_pair: int = 5_000
     # 優先度4: 初心者と組む回数を非初心者間で均等にする
     beginner_spread: int = 120
     # 優先度5: 初心者を含むペア同士でマッチを組む
     beginner_concentration: int = 700
+    # 優先度5a: 対等なペア同士のマッチを増やす。左右のペアの強さの差に比例して減点。
+    # 仕様ではばらけ（優先度1）の方が上なので、ばらけを潰さない程度に留める。
+    # 実測では 0→15 で強さの差が 0.92→0.79、変異性の超過が +1.5pt。
+    # 15→30 は差 0.14 の改善に +2.5pt かかり、効率が落ちる。
+    strength_gap: int = 15
     # 優先度6: 男女ペア同士のマッチを優先する。
     # 仕様ではばらけ(優先度1)の方が上なので、ペア重複1回ぶん(240)より小さくする。
     gender: int = 60
@@ -175,6 +217,22 @@ class PlayerStat:
     def is_beginner(self) -> bool:
         """初心者かどうか。"""
         return self.level.is_beginner
+
+    @property
+    def knows_rules(self) -> bool:
+        """ルールを覚えているか。"""
+        return self.level.knows_rules
+
+    @property
+    def strength(self) -> int:
+        """ペアの強さを見積もるための点数。レベルと性別で決まる。
+
+        初心者は男女を区別しない。ボールが返せるかどうかの段階なので、
+        パワーの差が意味を持たないため。
+        """
+        if self.level is Level.BEGINNER:
+            return Level.BEGINNER.strength
+        return self.level.strength + _GENDER_STRENGTH[self.gender]
 
 
 def pair_key(a: int, b: int) -> tuple[int, int]:

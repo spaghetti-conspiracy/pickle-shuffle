@@ -575,6 +575,75 @@ def test_partnering_a_beginner_is_shared_evenly():
     assert max(counts) - min(counts) <= 2
 
 
+def test_rule_unaware_players_are_not_paired_together():
+    """ルールを覚えていない者どうしでペアを組ませない（仕様 3a/3b/3c）。
+
+    初心者はボールが返せず試合が成立しない。ラケット経験者は1試合で慣れるので、
+    組んでしまっても傷は浅い。優先度はその順。
+    """
+    members = make_members(16, males=8, beginners=2, racket=3)
+    sim = Simulator(members, seed=6400)
+    sim.run(24)
+    counts = sim.unaware_pair_counts()
+    assert counts["beginner-beginner"] == 0
+    assert counts["beginner-racket"] == 0
+    # 避けられる構成なので、ラケット経験者同士もほとんど出ない
+    assert counts["racket-racket"] <= 2
+
+
+def test_rule_unaware_pairs_degrade_in_the_order_of_the_spec():
+    """避けきれない人数構成では、優先度の低いものから先に崩れる。
+
+    16名全員がラケット経験者なら、どう組んでもラケット経験者同士になる。
+    そういう場合でも破綻せず、初心者を含む組み合わせから先に守られる。
+    """
+    members = make_members(16, males=8, beginners=2, racket=14)
+    sim = Simulator(members, seed=99)
+    sim.run(12)
+    counts = sim.unaware_pair_counts()
+    assert counts["beginner-beginner"] == 0, "初心者同士だけは最後まで守る"
+    assert counts["racket-racket"] > 0, "テストの前提: 避けられない構成であること"
+
+
+def test_matches_are_between_pairs_of_similar_strength():
+    """対等なペア同士のマッチを増やす（仕様 5a）。
+
+    強さはレベルと性別で見積もる。20点満点の尺度で、平均の差が小さいほどよい。
+    """
+    sim = Simulator(make_members(16, males=8, beginners=2, racket=3), seed=42)
+    sim.run(24)
+    gaps = sim.strength_gaps()
+    assert sum(gaps) / len(gaps) <= 1.5
+    assert max(gaps) <= 8
+
+
+def test_strength_ignores_gender_for_beginners():
+    """初心者は男女を区別しない。
+
+    ボールが返せるかどうかの段階なので、パワーの差が意味を持たない。
+    """
+    male = player(1, gender=Gender.MALE, level=Level.BEGINNER)
+    female = player(2, gender=Gender.FEMALE, level=Level.BEGINNER)
+    assert male.strength == female.strength == 0
+
+    # 初心者以外は性別で差が付く
+    assert player(3, gender=Gender.MALE, level=Level.PICKLEBALL).strength > player(
+        4, gender=Gender.FEMALE, level=Level.PICKLEBALL
+    ).strength
+
+
+def test_the_level_gap_is_larger_below_than_above():
+    """初心者とラケット経験者の差は、ラケット経験者とピックルボール経験者の差より大きい。
+
+    仕様では3倍程度としている。
+    """
+    beginner = Level.BEGINNER.strength
+    racket = Level.RACKET_EXPERIENCED.strength
+    pickleball = Level.PICKLEBALL.strength
+    assert beginner < racket < pickleball
+    assert (racket - beginner) == 3 * (pickleball - racket)
+
+
 def test_beginner_pairs_ignore_gender():
     """初心者を含むペアは男女構成の評価から外す（仕様 6d）。"""
     beginner = player(1, gender=Gender.MALE, level=Level.BEGINNER)

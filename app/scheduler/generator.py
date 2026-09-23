@@ -290,11 +290,13 @@ class _Scorer:
         self.pair_cost: dict[Pair, int] = {}
         self.pair_kind: dict[Pair, PairKind] = {}
         self.pair_has_beginner: dict[Pair, int] = {}
+        self.pair_strength: dict[Pair, int] = {}
 
         for a, b in combinations(players, 2):
             key = pair_key(a.id, b.id)
             self.pair_kind[key] = _pair_kind(a, b)
             self.pair_has_beginner[key] = int(a.is_beginner or b.is_beginner)
+            self.pair_strength[key] = a.strength + b.strength
             self.pair_cost[key] = self._compute_pair_cost(a, b, key)
 
     def _compute_pair_cost(self, a: PlayerStat, b: PlayerStat, key: Pair) -> int:
@@ -303,11 +305,19 @@ class _Scorer:
         # 増分 2n+1 は「ペアを組んだ回数の二乗和」を最小化する = 回数を均す。
         cost = w.partner * (2 * self._state.partner.get(key, 0) + 1)
 
-        if a.is_beginner and b.is_beginner:
-            # 優先度3: 初心者同士のペアは避ける。実質ハード制約。
-            cost += w.beginner_pair
-        elif a.is_beginner or b.is_beginner:
-            # 優先度4: 初心者と組む回数を、非初心者の間で均等にする。
+        # 優先度3: ルールを覚えていない者同士でペアを組ませない。
+        # 初心者はボールが返せず試合が成立しないので最も強く避ける。
+        # ラケット経験者は1試合で慣れるので、組ませてしまっても傷は浅い。
+        if not a.knows_rules and not b.knows_rules:
+            if a.is_beginner and b.is_beginner:
+                cost += w.beginner_pair
+            elif a.is_beginner or b.is_beginner:
+                cost += w.beginner_racket_pair
+            else:
+                cost += w.racket_pair
+
+        # 優先度4: 初心者と組む回数を、初心者以外の間で均等にする。
+        if a.is_beginner != b.is_beginner:
             non_beginner = b.id if a.is_beginner else a.id
             cost += w.beginner_spread * (
                 2 * self._state.beginner_partner.get(non_beginner, 0) + 1
@@ -329,6 +339,8 @@ class _Scorer:
             for x in pair_a
             for y in pair_b
         )
+        # 優先度5a: 対等なペア同士のマッチがよい。左右の強さの差に比例して減点する。
+        cost += w.strength_gap * abs(self.pair_strength[pair_a] - self.pair_strength[pair_b])
         # 優先度6: 男女ペア同士のマッチが望ましい。
         cost += gender_cost(self.pair_kind[pair_a], self.pair_kind[pair_b], w)
         # スキップされた試合をそのまま出さない。

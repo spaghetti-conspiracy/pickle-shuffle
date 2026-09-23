@@ -40,6 +40,7 @@ def make_members(
     *,
     males: int | None = None,
     beginners: int = 0,
+    racket: int = 0,
     start_id: int = 1,
 ) -> list[MemberSpec]:
     """テスト用のメンバー一覧を作る。
@@ -48,6 +49,7 @@ def make_members(
         count: 人数。
         males: 男性の人数。``None`` なら男女交互。
         beginners: 先頭から何人を初心者にするか。
+        racket: 初心者に続けて何人をラケット経験者（ルール習得中）にするか。
         start_id: id の開始値。
     """
     members: list[MemberSpec] = []
@@ -56,7 +58,12 @@ def make_members(
             gender = Gender.MALE if i % 2 == 0 else Gender.FEMALE
         else:
             gender = Gender.MALE if i < males else Gender.FEMALE
-        level = Level.BEGINNER if i < beginners else Level.PICKLEBALL
+        if i < beginners:
+            level = Level.BEGINNER
+        elif i < beginners + racket:
+            level = Level.RACKET_EXPERIENCED
+        else:
+            level = Level.PICKLEBALL
         members.append(
             MemberSpec(id=start_id + i, nickname=f"m{start_id + i}", gender=gender, level=level)
         )
@@ -239,6 +246,34 @@ class Simulator:
                 else:
                     streak = 0
         return worst
+
+    def unaware_pair_counts(self) -> dict[str, int]:
+        """ルールを覚えていない者どうしのペアが何回できたか。"""
+        counts = {"beginner-beginner": 0, "beginner-racket": 0, "racket-racket": 0}
+        for plan in self.adopted_plans:
+            for match in plan.matches:
+                for team in (match.team_a, match.team_b):
+                    levels = sorted(self.specs[i].level.value for i in team)
+                    if levels == ["beginner", "beginner"]:
+                        counts["beginner-beginner"] += 1
+                    elif levels == ["beginner", "racket_experienced"]:
+                        counts["beginner-racket"] += 1
+                    elif levels == ["racket_experienced", "racket_experienced"]:
+                        counts["racket-racket"] += 1
+        return counts
+
+    def strength_gaps(self) -> list[int]:
+        """各試合の、左右のペアの強さの差。"""
+        by_id = {p.id: p for p in self.player_stats()}
+        gaps = []
+        for plan in self.adopted_plans:
+            for match in plan.matches:
+                sides = [
+                    sum(by_id[i].strength for i in team)
+                    for team in (match.team_a, match.team_b)
+                ]
+                gaps.append(abs(sides[0] - sides[1]))
+        return gaps
 
     def gender_pattern_counts(self) -> dict[str, int]:
         """採用された試合の男女構成を数える。"""

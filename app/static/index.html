@@ -19,16 +19,14 @@
     </div>
     <div class="row" style="margin-top:0.75rem">
       <input id="new-session-name" placeholder="新しい練習会の名前" size="20">
+      <input id="new-session-event" placeholder="tennisbear のイベントID（任意）" size="24"
+             inputmode="numeric">
       <label>コート数
         <select id="new-session-courts">
           <option>1</option><option selected>2</option><option>3</option><option>4</option>
         </select>
       </label>
       <button id="create-session" class="primary">作成</button>
-    </div>
-    <div class="row" style="margin-top:0.5rem">
-      <input id="new-session-event" placeholder="tennisbear のイベントID（任意）" size="24"
-             inputmode="numeric">
     </div>
     <p id="error" class="error"></p>
     <p class="notice">

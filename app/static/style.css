@@ -286,6 +286,24 @@ tr.left {
   white-space: nowrap;
 }
 
+/* 名前の色。男女の区分が一目で分かるようにする。
+   初心者だけ緑にする表示はアルゴリズムの確認用で、ふだんは使わない。 */
+.player[data-tone="male"] {
+  color: #9ec5ff;
+}
+
+.player[data-tone="female"] {
+  color: #ffc4a8;
+}
+
+.player[data-tone="other"] {
+  color: var(--text);
+}
+
+.player[data-tone="beginner"] {
+  color: #9ee6a8;
+}
+
 .versus {
   flex: 0 0 auto;
   color: var(--muted);

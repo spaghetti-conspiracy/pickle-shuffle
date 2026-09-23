@@ -25,17 +25,28 @@ const EMPTY_COURT_MESSAGE = {
   practice: "練習コート",
 };
 
+/** 名前の色分け。男女の区分が一目で分かるようにする。
+ *
+ * 初心者を緑にするかどうかは練習会の設定で切り替える。緑はアルゴリズムの
+ * 確認用で、ふだんは男女の区分だけで色を付ける。
+ */
+function toneOf(player, highlightBeginners) {
+  if (highlightBeginners && player.level === "beginner") return "beginner";
+  return player.gender;
+}
+
 /** 名前を1行に収める。長い名前は文字数に応じて縮める。 */
-function playerLabel(nickname) {
+function playerLabel(player, highlightBeginners) {
   const label = document.createElement("div");
   label.className = "player";
-  label.textContent = nickname;
+  label.textContent = player.nickname;
+  label.dataset.tone = toneOf(player, highlightBeginners);
   // 全角1文字をほぼ1em とみなし、収まる大きさを CSS 側で逆算させる。
-  label.style.setProperty("--len", String(Math.max(nickname.length, 3)));
+  label.style.setProperty("--len", String(Math.max(player.nickname.length, 3)));
   return label;
 }
 
-function renderCourt(court) {
+function renderCourt(court, highlightBeginners) {
   const element = document.createElement("div");
   element.className = "court";
 
@@ -58,7 +69,7 @@ function renderCourt(court) {
       const side = document.createElement("div");
       side.className = "team";
       for (const player of team) {
-        side.append(playerLabel(player.nickname));
+        side.append(playerLabel(player, highlightBeginners));
       }
       body.append(side);
     }
@@ -81,13 +92,14 @@ function renderMemberUrl(url) {
 
 
 function render(data) {
+  const highlightBeginners = data.session.highlight_beginners;
   document.title = `${data.session.name} — 全体表示`;
   $("session-name").textContent = data.session.name;
   $("admin-link").href = `/manage.html?session=${sessionToken}`;
 
   const courts = $("courts");
   courts.innerHTML = "";
-  for (const court of data.courts) courts.append(renderCourt(court));
+  for (const court of data.courts) courts.append(renderCourt(court, highlightBeginners));
 
   $("waiting").textContent = data.waiting.map((p) => p.nickname).join("　") || "—";
   $("resting").textContent = data.resting.map((p) => p.nickname).join("　") || "—";

@@ -73,6 +73,16 @@ jobs:
         # 開発用の依存を入れずに、本番に入るものだけで動くことを確かめる。
         run: uv sync --frozen --no-dev --python 3.12
 
+      - name: DB を用意する
+        # **本番と同じ手順。** サーバーレスでは起動時に用意しないので、
+        # デプロイのあとに1度だけ流す（DEPLOY_SETUP.md）。ここを省くと
+        # 「デプロイはできたのに合言葉が通らない」になる。
+        env:
+          VERCEL: "1"
+          DATABASE_URL: "sqlite:///${{ runner.temp }}/ci.db"
+          ADMIN_PASSWORD: "ciあいことば"
+        run: uv run --no-dev python -m app.init_db
+
       - name: 本番と同じ形で起動して叩く
         # Vercel が使うのは api/index.py。ここが読めなければ本番は 500 になる。
         # **TestClient は使わない。** あれは開発用の依存（httpx2）を要求するので、

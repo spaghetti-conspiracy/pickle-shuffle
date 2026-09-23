@@ -35,7 +35,9 @@ class SessionUpdate(BaseModel):
 class SessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    token: str
+    """URL と API で使う識別子。連番の内部 id は外に出さない。"""
+
     name: str
     created_at: datetime
     courts: list[CourtOut]
@@ -92,7 +94,16 @@ class CourtStateOut(BaseModel):
     court_index: int
     name: str
     state: str
-    """``match`` = 試合あり / ``practice`` = 練習コート / ``idle`` = 人数が足りず未使用。"""
+    """コートの状態。
+
+    * ``match`` — この回の試合が入っている
+    * ``waiting`` — まだ生成していない。「次のマッチ」を押せば入る
+    * ``idle`` — 生成したが、出場できる人数が足りずこのコートは空き
+    * ``practice`` — 練習用に試合から外している
+
+    ``waiting`` と ``idle`` を混ぜると「13人いるのに人数が足りません」と出て、
+    メンバー登録やコート設定を疑わせてしまうので分けてある。
+    """
 
     match: MatchOut | None = None
 
@@ -111,6 +122,8 @@ class CurrentOut(BaseModel):
     """生成後に休憩や離脱になり、いま表示中のマッチと食い違っているメンバー。"""
 
     duplicate_nicknames: list[str]
+    member_url: str = ""
+    """メンバー用画面の URL。QR コードと同じもので、読み上げや共有に使う。"""
 
 
 class StatsOut(BaseModel):

@@ -199,7 +199,7 @@ function renderClock() {
       element.removeAttribute("data-state");
     }
   } else if (!clock.hasLimit()) {
-    write(formatClock(clock.elapsed()), state === "paused" ? "一時停止中" : "経過");
+    write(formatClock(clock.elapsed()), state === "paused" ? "一時停止中" : "");
     element.dataset.state = state === "paused" ? "paused" : "running";
   } else {
     const left = clock.remaining();

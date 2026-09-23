@@ -49,7 +49,7 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           # 版を固定する。トークンを持った状態で、知らないうちに新しい CLI が
           # 走るのは避ける。上げるときは意識して上げる。
-          VERCEL_CLI_VERSION: "48.2.11"
+          VERCEL_CLI_VERSION: "59.25.4"
           STAGING_DOMAIN: ${{ vars.STAGING_DOMAIN }}
         run: |
           npx --yes vercel@$VERCEL_CLI_VERSION pull --yes --environment=preview --token "$VERCEL_TOKEN"

@@ -252,6 +252,43 @@ $("highlight-beginners").addEventListener("change", async (event) => {
   }
 });
 
+/** 参加者の取り込み。何度でも押してよい。
+ *
+ * すでにいる人は tennisbear の ID で見分けるので増えない。直したレベルも戻らない。
+ * 直前に増えた人を足すために、練習会が始まってからも使う。
+ */
+$("import-members").addEventListener("click", async () => {
+  const button = $("import-members");
+  const eventId = $("import-event").value.trim();
+  const result = $("import-result");
+  if (!eventId) {
+    showError("イベントID を入れてください");
+    return;
+  }
+  button.disabled = true;
+  result.textContent = "取り込んでいます…";
+  try {
+    const summary = await api.post(
+      `/api/sessions/${sessionToken}/members/import`,
+      { event_id: Number(eventId) },
+    );
+    const parts = [`${summary.added.length}人を追加`];
+    if (summary.renamed.length) {
+      const pairs = summary.renamed.map(([before, after]) => `${before}→${after}`);
+      parts.push(`呼び名の変更 ${pairs.join("、")}`);
+    }
+    if (summary.unchanged) parts.push(`${summary.unchanged}人は登録済み`);
+    result.textContent = parts.join("　/　");
+    showError("");
+    await Promise.all([loadMembers(), loadProfiles()]);
+  } catch (error) {
+    result.textContent = "";
+    showError(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("open-overview").addEventListener("click", () => {
   window.open(`/overview.html?session=${sessionToken}`, "_blank");
 });

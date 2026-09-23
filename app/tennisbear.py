@@ -201,7 +201,11 @@ def parse_event_page(html: str) -> list[Participant]:
 
     key = state.find(_PARTICIPANTS_KEY)
     if key < 0:
-        raise UpstreamError("イベントページに参加者の一覧が見つかりませんでした")
+        # 存在しないイベントでも 200 が返ってくる（中身が無いだけ）ので、
+        # ここに落ちる原因はたいてい ID の間違い。
+        raise UpstreamError(
+            "参加者の一覧が見つかりませんでした。イベントIDをご確認ください"
+        )
     entries = _entries(state[key + len(_PARTICIPANTS_KEY) :])
 
     participants: list[Participant] = []

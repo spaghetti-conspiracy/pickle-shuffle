@@ -26,7 +26,16 @@
       </label>
       <button id="create-session" class="primary">作成</button>
     </div>
+    <div class="row" style="margin-top:0.5rem">
+      <input id="new-session-event" placeholder="tennisbear のイベントID（任意）" size="24"
+             inputmode="numeric">
+    </div>
     <p id="error" class="error"></p>
+    <p class="notice">
+      イベントID を入れると参加者を取り込みます。イベントページの URL
+      <code>…/event/1614380/info</code> の数字の部分です。
+      性別とレベルは推定なので、取り込んだあと管理画面で直せます。
+    </p>
     <p class="notice">コート数は作成時に決めます。あとから個々のコートを試合用から外せます。</p>
   </section>
 </div>

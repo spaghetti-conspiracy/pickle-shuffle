@@ -43,15 +43,31 @@ $("create-session").addEventListener("click", async () => {
     showError("練習会の名前を入力してください");
     return;
   }
+  const eventId = $("new-session-event").value.trim();
+  let session;
   try {
-    const session = await api.post("/api/sessions", {
+    session = await api.post("/api/sessions", {
       name,
       court_count: Number($("new-session-courts").value),
     });
-    openSession(session.token);
   } catch (error) {
     showError(error.message);
+    return;
   }
+
+  if (eventId) {
+    // 取り込みだけ失敗しても練習会は残す。管理画面からやり直せる。
+    showError("参加者を取り込んでいます…");
+    try {
+      await api.post(`/api/sessions/${session.token}/members/import`, {
+        event_id: Number(eventId),
+      });
+    } catch (error) {
+      showError(`練習会は作りました。取り込みに失敗: ${error.message}`);
+      return;
+    }
+  }
+  openSession(session.token);
 });
 
 loadSessions().catch((error) => {

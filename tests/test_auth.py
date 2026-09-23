@@ -7,8 +7,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from app.auth import COOKIE_NAME, hash_password, issue_cookie, verify_password
 from app.config import settings
+from app.errors import UnauthorizedError
 from app.scheduler.domain import Gender, Level
 from tests.test_api import add_members, create_session
 
@@ -232,3 +237,54 @@ def test_another_owners_rows_are_not_reachable_by_id(client, db):
     ).status_code == 404
     assert client.delete(f"/api/members/{stranger_member.id}").status_code == 404
     assert client.post(f"/api/rounds/{stranger_round.id}/adopt").status_code == 404
+
+
+def test_changing_the_password_takes_effect_without_touching_the_db(db, monkeypatch):
+    """`ADMIN_PASSWORD` を変えたら、次のログインから新しい合言葉で入れること。
+
+    起動のたびに確かめると pbkdf2 を20万回まわすので、冷えた1回目が遅くなる。
+    **合わなかったときだけ**見れば、ふだんの費用はゼロで済む。
+    """
+    from sqlalchemy import select
+
+    import app.services.owners as owners
+    from app.models import Admin
+
+    before = db.scalars(select(Admin)).one().password_hash
+
+    # Settings は frozen なので、差し替えた写しを置く。
+    monkeypatch.setattr(
+        owners, "settings", replace(owners.settings, admin_password="あたらしい合言葉")
+    )
+
+    with pytest.raises(UnauthorizedError):
+        owners.authenticate(db, "まったく違う")
+
+    admin = owners.authenticate(db, "あたらしい合言葉")
+    assert admin.is_bootstrap is True
+    assert admin.password_hash != before, "作り直されていない"
+
+    # 元の合言葉はもう通らない。
+    with pytest.raises(UnauthorizedError):
+        owners.authenticate(db, settings.admin_password)
+
+
+def test_a_real_admin_is_not_overwritten(db, monkeypatch):
+    """本物の管理者を登録したあとの行は、環境変数で書き換えない。"""
+
+    import app.services.owners as owners
+    from app.models import Admin
+
+    real = Admin(login="honmono", password_hash=hash_password("本物の合言葉"))
+    db.add(real)
+    db.commit()
+    kept = real.password_hash
+
+    monkeypatch.setattr(
+        owners, "settings", replace(owners.settings, admin_password="別の合言葉")
+    )
+    owners.authenticate(db, "別の合言葉")  # bootstrap の行が作り直される
+
+    db.refresh(real)
+    assert real.password_hash == kept, "本物の管理者を書き換えている"
+    assert owners.authenticate(db, "本物の合言葉").login == "honmono"

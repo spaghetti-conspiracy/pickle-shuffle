@@ -168,3 +168,37 @@ def test_a_match_is_generated_and_started(page, server, watch):
         )
     finally:
         guest.close()
+
+
+def test_it_says_what_it_is_doing_while_slow(page):
+    """待たせるときだけ、何をしているかを見せること。
+
+    サーバーレスなので、しばらく使っていないと最初の1回は関数の起動と
+    DB の点検で数秒かかる。黙って止まって見えると壊れたと思われる。
+    速いときは何も出さない。
+    """
+    result = page.evaluate(
+        """async () => {
+            const m = await import('/api.js');
+            const box = document.getElementById('gate-error');
+
+            // 速く終わったときは何も出ない。
+            const quick = m.showWhileSlow(box, 'テスト', { after: 300 });
+            await new Promise((r) => setTimeout(r, 50));
+            const whenQuick = box.textContent;
+            quick();
+
+            // 待たされると出て、点が増えて動いていることが分かる。
+            const slow = m.showWhileSlow(box, '点検しています', { after: 50 });
+            await new Promise((r) => setTimeout(r, 200));
+            const first = box.textContent;
+            await new Promise((r) => setTimeout(r, 500));
+            const later = box.textContent;
+            slow();
+            return { whenQuick, first, later, afterDone: box.textContent };
+        }"""
+    )
+    assert result["whenQuick"] == "", "速いのに出ている"
+    assert result["first"].startswith("点検しています"), result
+    assert result["later"] != result["first"], "止まって見える（点が増えていない）"
+    assert result["afterDone"] == "", "終わったのに残っている"

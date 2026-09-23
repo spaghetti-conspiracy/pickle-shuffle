@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api import public_router, router
 from app.config import settings
-from app.db import SessionLocal, create_all
+from app.db import SessionLocal, create_all, needs_setup
 from app.errors import AppError
 from app.services.owners import ensure_bootstrap
 
@@ -35,22 +35,23 @@ class RevalidatingStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """起動時にテーブルを作り、既定の団体と管理者を用意する。
+    """起動時に、用意ができているかだけ確かめる。
 
-    **サーバーレスでは毎回はやらない。** 関数は冷えるたびに起動し直すので、
-    そのたびにテーブルの照合（`create_all`）と合言葉のハッシュ計算
-    （pbkdf2 を20万回）をやると、冷えた1回目が10秒近くかかる。
-    手元の Postgres 相手でも 0.22 秒、遠い DB ならその何倍にもなる。
+    **毎回フル点検はしない。** `create_all()` はテーブルを1つずつ照合するため
+    DB へ何度も往復し、遠い DB では起動が数秒延びていた。ふだんは
+    「管理者が1人でもいるか」を1回聞くだけで足りる（`needs_setup`）。
 
-    サーバーレスでは `SKIP_DB_INIT=1` を立てて、用意は
-    `python -m app.init_db` で1度だけ行う（DEPLOY_SETUP.md）。
+    足りなければ、そのときだけ作る。サーバーレスでも同じ。**再起動すれば
+    勝手に整う**ほうが、手で流し忘れて最初の利用者が踏むより良い。
+
+    `SKIP_DB_INIT=1` を立てれば、この確認ごと省ける（用意済みだと
+    分かっているときや、起動を一切遅らせたくないとき用）。
     """
-    if settings.skip_db_init:
-        yield
-        return
-    create_all()
-    with SessionLocal() as db:
-        ensure_bootstrap(db)
+    if not settings.skip_db_init:
+        with SessionLocal() as db:
+            if needs_setup(db):
+                create_all()
+                ensure_bootstrap(db)
     yield
 
 

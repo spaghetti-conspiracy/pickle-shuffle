@@ -71,7 +71,34 @@ def authenticate(db: Session, password: str) -> Admin:
     for admin in db.scalars(select(Admin).order_by(Admin.id)):
         if verify_password(password, admin.password_hash):
             return admin
+
+    # 合わなかった。**環境変数が変わっていないか、ここで見る。**
+    #
+    # 起動のたびに確かめると pbkdf2 を20万回まわすことになり、冷えた1回目が
+    # そのぶん遅くなる。合わなかったときだけ見れば、ふだんの費用はゼロで済む。
+    refreshed = _refresh_bootstrap_password(db)
+    if refreshed is not None and verify_password(password, refreshed.password_hash):
+        return refreshed
     raise UnauthorizedError("合言葉が違います")
+
+
+def _refresh_bootstrap_password(db: Session) -> Admin | None:
+    """固定の管理者のハッシュを、いまの `ADMIN_PASSWORD` から作り直す。
+
+    すでに一致していれば何もしない（作り直す必要が無い）。
+    本物の管理者を登録したあとの行は触らない。
+    """
+    admin = db.scalars(
+        select(Admin).where(Admin.is_bootstrap.is_(True)).order_by(Admin.id)
+    ).first()
+    if admin is None:
+        return None
+    if verify_password(settings.admin_password, admin.password_hash):
+        return None  # 変わっていない
+    admin.password_hash = hash_password(settings.admin_password)
+    db.commit()
+    db.refresh(admin)
+    return admin
 
 
 def get_admin(db: Session, admin_id: int) -> Admin | None:

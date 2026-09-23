@@ -111,15 +111,18 @@ def update_person(
     （不変則12: 反映は次の生成から）。表示画面には ``updated_at`` を見て
     「登録情報が更新されました」が出る。
     """
+    renamed = False
     if nickname is not None:
-        person.nickname = unique_nickname(
+        wanted = unique_nickname(
             _clean(nickname), taken_nicknames(db, owner, exclude_id=person.id)
         )
+        renamed = wanted != person.nickname
+        person.nickname = wanted
     if gender is not None:
         person.gender = gender
     if level is not None:
         person.level = level
-    _propagate(db, person)
+    _propagate(db, person, rename=renamed)
     if commit:
         db.commit()
         db.refresh(person)
@@ -176,7 +179,8 @@ def numbered_pairs(people: list[Person]) -> set[int]:
     方針なので、どちらを消すかを選べるように一覧で知らせる。
 
     「m1」と「m2」のように、たまたま数字で終わる別々の名前は組にしない。
-    片方がもう片方＋数字になっている場合だけを見る。
+    片方がもう片方＋数字（または完全に同じ）の場合だけを見る。完全な同名は
+    ふつう作れないが、2端末から同時に足すと作れてしまうので拾っておく。
     """
     flagged: set[int] = set()
     for person in people:
@@ -187,7 +191,7 @@ def numbered_pairs(people: list[Person]) -> set[int]:
             if len(shorter) > len(longer):
                 longer, shorter = shorter, longer
             tail = longer[len(shorter) :]
-            if longer.startswith(shorter) and tail.isdigit():
+            if longer.startswith(shorter) and (tail == "" or tail.isdigit()):
                 flagged.add(person.id)
                 break
     return flagged
@@ -212,8 +216,13 @@ def _clean(nickname: str) -> str:
     return nickname.strip()[:NICKNAME_MAX]
 
 
-def _propagate(db: Session, person: Person) -> None:
-    """台帳の値を、その人が入っている練習会の参加者に書き写す。"""
+def _propagate(db: Session, person: Person, *, rename: bool) -> None:
+    """台帳の値を、その人が入っている練習会の参加者に書き写す。
+
+    **呼び名は、台帳で実際に変えたときだけ書き写す。** 練習会の中で読み上げ用に
+    付け直した名前（`update_member`）は台帳に上げない約束なので、属性を直した
+    ついでに下りで上書きすると、その言い換えを黙って消してしまう。
+    """
     members = list(
         db.scalars(select(Member).where(Member.person_id == person.id))
     )
@@ -223,6 +232,8 @@ def _propagate(db: Session, person: Person) -> None:
             continue
         member.gender = person.gender
         member.level = person.level
+        if not rename:
+            continue
         taken = {
             other.nickname
             for other in db.scalars(

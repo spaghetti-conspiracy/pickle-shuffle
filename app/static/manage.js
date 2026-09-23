@@ -189,7 +189,13 @@ function statusButton(member) {
 
 async function loadMembers() {
   const members = await api.get(`/api/sessions/${sessionToken}/members`);
-  registered = new Set(members.map((m) => m.person_id).filter((id) => id !== null));
+  // 離脱した人は名簿の選択肢に戻す。選び直すと、その行がそのまま復帰する。
+  registered = new Set(
+    members
+      .filter((m) => m.status !== "left")
+      .map((m) => m.person_id)
+      .filter((id) => id !== null),
+  );
   renderPeopleOptions();
   const counts = {};
   for (const member of members) counts[member.nickname] = (counts[member.nickname] ?? 0) + 1;

@@ -82,8 +82,6 @@ class ImportResultOut(BaseModel):
     added: list[str]
     """新しく登録したニックネーム。"""
 
-    """呼び名が変わった人。(前, 後)。"""
-
     unchanged: int
     """すでに登録済みで、変更が無かった人数。"""
 
@@ -137,6 +135,9 @@ class PersonOut(BaseModel):
 
     向こうの ID そのものは返さない。二重登録を見分けるための印。
     """
+
+    source_label: str | None = None
+    """画面に出す取り込み元の名前（``tennisbear``）。対応表はサーバに1つだけ置く。"""
 
     duplicate: bool = False
     """番号で見分けている同名がいるか（「マッツ」と「マッツ2」）。

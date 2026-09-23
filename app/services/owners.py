@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password, verify_password
@@ -55,7 +56,13 @@ def ensure_bootstrap(db: Session) -> Owner:
     link = db.get(OwnerAdmin, (owner.id, admin.id))
     if link is None:
         db.add(OwnerAdmin(owner_id=owner.id, admin_id=admin.id))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # サーバーレスでは複数のインスタンスが同時に起動して、同じ行を
+        # 作ろうとすることがある。先に誰かが作っていれば、それでよい。
+        db.rollback()
+        return current_owner(db)
     return owner
 
 
@@ -74,8 +81,11 @@ def get_admin(db: Session, admin_id: int) -> Admin | None:
 def current_owner(db: Session, admin: Admin | None = None) -> Owner:
     """いま見ている団体。
 
-    管理者が分かればその人の団体、分からなければ既定の団体（1つしかない）。
-    認証を本格化するときは、ここで ``admin`` を必須にすればよい。
+    管理者が分かればその人の団体。分からないのはテストや移行のときだけで、
+    そのときは既定の団体（1つしかない）を返す。
+
+    **管理者が分かっているのに団体が無ければ、既定へは落とさない。**
+    団体が増えた瞬間に「よその団体が見える」へ化ける既定値になるため。
     """
     if admin is not None:
         owner = db.scalars(
@@ -84,8 +94,9 @@ def current_owner(db: Session, admin: Admin | None = None) -> Owner:
             .where(OwnerAdmin.admin_id == admin.id)
             .order_by(Owner.id)
         ).first()
-        if owner is not None:
-            return owner
+        if owner is None:
+            raise NotFoundError("この管理者に団体が紐づいていません")
+        return owner
     owner = db.scalars(select(Owner).order_by(Owner.id)).first()
     if owner is None:
         raise NotFoundError("団体が登録されていません")

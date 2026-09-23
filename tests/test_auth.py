@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.auth import COOKIE_NAME, hash_password, issue_cookie, verify_password
 from app.config import settings
+from app.scheduler.domain import Gender, Level
 from tests.test_api import add_members, create_session
 
 GATED = [
@@ -158,3 +159,76 @@ def test_a_new_endpoint_is_closed_by_default(client):
         ("POST", "/api/logout"),
         ("GET", "/api/sessions/{session_token}/current"),
     }, "公開する入口が増えている。メンバー用画面に本当に必要か確かめること"
+
+
+# ---------------------------------------------------------------------------
+# レビューで見つかった欠陥の回帰テスト
+# ---------------------------------------------------------------------------
+
+
+BROKEN_COOKIES = [
+    ("桁あふれ", "9" * 30 + ":x"),
+    ("区切りが無い", "1"),
+    ("id が数字でない", "abc:def"),
+    ("負の値", "-1:x"),
+    ("長すぎる", "1:" + "a" * 500),
+    ("空", ""),
+]
+"""HTTP で実際に送れる細工。ヘッダは ASCII なので、非 ASCII は関数で直接確かめる。"""
+
+
+def test_a_broken_cookie_is_refused_not_crashed(guest_client):
+    """細工されたクッキーで 500 にしない。
+
+    合言葉を持たない相手が自由に送れる入口なので、桁あふれや非 ASCII で
+    サーバが落ちるようでは門の意味が薄れる。
+
+    クライアントの cookie jar を通さず、ヘッダを直接組み立てる。
+    ブラウザが送らない値でも、HTTP としては送れてしまうため。
+    """
+    for label, value in BROKEN_COOKIES:
+        response = guest_client.get(
+            "/api/sessions", headers={"Cookie": f"{COOKIE_NAME}={value}"}
+        )
+        assert response.status_code == 401, f"{label}: {response.status_code}"
+
+
+def test_a_non_ascii_cookie_is_refused_not_crashed():
+    """非 ASCII を混ぜたクッキーでも例外にしない。
+
+    ヘッダはバイト列なので、サーバ側には ASCII 外の文字を含む str として
+    届き得る。`hmac.compare_digest` は str のままだと例外を投げる。
+    """
+    from app.auth import cookie_matches, read_cookie
+
+    assert read_cookie("1:あいう") is None
+    assert cookie_matches("1:あいう", 1, hash_password("x")) is False
+
+
+def test_another_owners_rows_are_not_reachable_by_id(client, db):
+    """よその団体の参加者・マッチは、連番の id を知っていても触れない。"""
+    from app.models import Owner
+    from app.services import people as people_service
+    from app.services import rounds as rounds_service
+    from app.services import sessions as sessions_service
+
+    other = Owner(name="よその団体")
+    db.add(other)
+    db.commit()
+    stranger_session = sessions_service.create_session(db, other, "よその練習会", 2)
+    for i in range(8):
+        sessions_service.add_member(
+            db,
+            stranger_session,
+            people_service.add_person(
+                db, other, nickname=f"x{i}", gender=Gender.MALE, level=Level.PICKLEBALL
+            ),
+        )
+    stranger_member = sessions_service.list_members(db, stranger_session.id)[0]
+    stranger_round = rounds_service.generate(db, stranger_session)
+
+    assert client.patch(
+        f"/api/members/{stranger_member.id}", json={"level": "beginner"}
+    ).status_code == 404
+    assert client.delete(f"/api/members/{stranger_member.id}").status_code == 404
+    assert client.post(f"/api/rounds/{stranger_round.id}/adopt").status_code == 404

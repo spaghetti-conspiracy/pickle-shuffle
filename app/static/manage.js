@@ -100,6 +100,30 @@ function autofillFromProfile() {
   $("new-level").value = profile.level;
 }
 
+/** レベルを変える。練習会の最中に上げ下げする運用が前提にある。 */
+function levelSelect(member) {
+  const select = document.createElement("select");
+  for (const [value, label] of Object.entries(LEVEL_LABELS)) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.append(option);
+  }
+  select.value = member.level;
+  select.addEventListener("change", async () => {
+    select.disabled = true;
+    try {
+      await api.patch(`/api/members/${member.id}`, { level: select.value });
+      await loadMembers();
+    } catch (error) {
+      select.value = member.level; // 失敗したら見た目を元に戻す
+      $("member-error").textContent = error.message;
+      select.disabled = false;
+    }
+  });
+  return select;
+}
+
 function statusButton(member) {
   const button = document.createElement("button");
   if (member.status === "resting") {
@@ -143,7 +167,13 @@ async function loadMembers() {
     gender.textContent = GENDER_LABELS[member.gender] ?? member.gender;
 
     const level = document.createElement("td");
-    level.textContent = LEVEL_LABELS[member.level] ?? member.level;
+    if (member.status === "left") {
+      level.textContent = LEVEL_LABELS[member.level] ?? member.level;
+    } else {
+      // ラケット経験者が慣れたら経験者に上げる運用があるので、ここで変えられる。
+      // 変更は次の生成から効き、表示中のマッチは動かない。
+      level.append(levelSelect(member));
+    }
 
     const plays = document.createElement("td");
     plays.textContent = String(member.plays);

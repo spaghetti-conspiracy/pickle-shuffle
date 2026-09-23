@@ -30,10 +30,7 @@
         <tbody id="courts-body"></tbody>
       </table>
     </div>
-    <p class="notice">
-      初心者の育成などで1面を練習に使うときは「練習コート」にします。
-      試合から外れるメンバーは「休憩」にしてください。
-    </p>
+    <p class="notice">初心者の育成などで1面を練習に使うときは「練習コート」にします。</p>
   </section>
 
   <section id="members-section">
@@ -48,7 +45,7 @@
       </select>
       <select id="new-level">
         <option value="pickleball">ピックルボール経験者</option>
-        <option value="racket_experienced">ラケット経験者（ルール不明）</option>
+        <option value="racket_experienced">ラケット経験者（ルール習得中）</option>
         <option value="beginner">未経験者</option>
       </select>
       <button id="add-member" class="primary">追加</button>
@@ -63,7 +60,11 @@
       </table>
     </div>
     <p id="duplicate-notice" class="notice hidden"></p>
+    <p class="notice">
+      練習コートに移るなど、試合から外れるメンバーは「休憩」にしてください。
+    </p>
   </section>
+
 </div>
 <script type="module" src="/manage.js"></script>
 </body>

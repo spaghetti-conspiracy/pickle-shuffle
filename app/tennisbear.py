@@ -22,6 +22,13 @@ from dataclasses import dataclass
 from app.errors import UpstreamError
 from app.scheduler.domain import Gender, Level
 
+#: 取得する応答の上限。実ページは 300KB 程度なので十分な余裕がある。
+#: 上限が無いと、相手の作りが変わったときにメモリを食い尽くしかねない。
+MAX_PAGE_BYTES = 8 * 1024 * 1024
+
+#: 短縮された変数の名前。JavaScript なので `$` を含みうる。
+_JS_NAME = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+
 #: 参加者一覧が入っている配列の名前。
 _PARTICIPANTS_KEY = "participantList:["
 
@@ -118,9 +125,20 @@ def _variable_table(state: str) -> dict[str, str]:
     の形で、値の多くが仮引数に置き換えられている。仮引数の並びと
     末尾の実引数の並びを突き合わせれば元に戻せる。
     """
-    params = state[state.index("(") + 1 : state.index(")")].split(",")
+    # `__NUXT__=(function(a,b,…)` なので、`function` の直後の括弧から切る。
+    # 最初の括弧から切ると params[0] が "function(a" になり、先頭の変数
+    # （実ページでは null）が表に載らない。
+    opening = state.index("(", len(_STATE_HEAD) - 1)
+    params = state[opening + 1 : state.index(")", opening)].split(",")
+    # JavaScript の変数名には `$` が使える（`a$` など）。Python の
+    # isidentifier() は弾いてしまうので、自前で確かめる。
+    if not all(_JS_NAME.fullmatch(p.strip()) for p in params):
+        raise UpstreamError("イベントページの形式が変わっているようです")
     body = state.rstrip().rstrip(";").rstrip(")")
-    args = _split_top_level(body[body.rindex("}(") + 2 :])
+    tail = body.rfind("}(")
+    if tail < 0:
+        raise UpstreamError("イベントページの形式が変わっているようです")
+    args = _split_top_level(body[tail + 2 :])
     if len(params) != len(args):
         raise UpstreamError("イベントページの形式が変わっているようです")
     return dict(zip(params, args, strict=True))
@@ -196,7 +214,11 @@ def parse_event_page(html: str) -> list[Participant]:
     head = html.find(_STATE_HEAD)
     if head < 0:
         raise UpstreamError("イベントページを読み取れませんでした")
-    state = html[head : html.index("</script>", head)]
+    end = html.find("</script>", head)
+    if end < 0:
+        # 応答が途中で切れた。500 にせず、取り込めなかったと伝える。
+        raise UpstreamError("イベントページを最後まで読み取れませんでした")
+    state = html[head:end]
     variables = _variable_table(state)
 
     key = state.find(_PARTICIPANTS_KEY)
@@ -249,7 +271,10 @@ def fetch_event_page(event_id: int, *, base_url: str, timeout: float) -> str:
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read().decode("utf-8", errors="replace")
+            raw = response.read(MAX_PAGE_BYTES + 1)
+        if len(raw) > MAX_PAGE_BYTES:
+            raise UpstreamError("イベントページが大きすぎます")
+        return raw.decode("utf-8", errors="replace")
     except urllib.error.HTTPError as error:
         if error.code == 404:
             raise UpstreamError(f"イベント {event_id} が見つかりませんでした") from error

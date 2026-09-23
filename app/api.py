@@ -177,7 +177,10 @@ def import_members(
     participants = tennisbear.parse_event_page(html)
     result = sessions_service.import_participants(db, session, participants)
     return ImportResultOut(
-        added=result.added, renamed=result.renamed, unchanged=result.unchanged
+        added=result.added,
+        renamed=result.renamed,
+        unchanged=result.unchanged,
+        resting=result.resting,
     )
 
 

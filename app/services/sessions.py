@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.errors import ConflictError, NotFoundError, ValidationError
 from app.models import (
+    NICKNAME_MAX,
     Court,
     Match,
     MatchSlot,
@@ -29,8 +30,7 @@ from app.tennisbear import Participant
 MAX_COURTS = 4
 """コート数の上限。実際の練習会で押さえられる面数から決めた。"""
 
-NICKNAME_MAX = 50
-"""ニックネームの長さの上限。DB の VARCHAR と揃える。"""
+
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +72,11 @@ def create_session(db: Session, name: str, court_count: int = 2) -> PracticeSess
     try:
         db.commit()
     except IntegrityError as error:
-        # 事前の確認とコミットの間に、別の端末が同じ名前で作った。
         db.rollback()
+        if "uq_session_name" not in str(error.orig):
+            # 名前以外の一意制約。言い換えると原因の特定を妨げる。
+            raise
+        # 事前の確認とコミットの間に、別の端末が同じ名前で作った。
         raise ValidationError(
             f"「{name}」という練習会がすでにあります。"
             "終了させるか、別の名前にしてください。"
@@ -176,6 +179,10 @@ def find_profile(
 
     ニックネームは識別子ではない（不変則14）ので、改名されると
     名前では見失う。ID で引ければ、管理者が直したレベルが次の練習会にも残る。
+
+    ID を持っている相手にニックネームで当てにいかない。同名の別人の属性を
+    そのまま被ってしまう（「マッツ」を初心者に直したら、別の「マッツ」も
+    初心者で入る）。名前で引くのは、ID の無い行に限る。
     """
     if tennisbear_user_id is not None:
         found = db.scalars(
@@ -185,9 +192,15 @@ def find_profile(
         ).first()
         if found is not None:
             return found
-    return db.scalars(
+    by_name = db.scalars(
         select(MemberProfile).where(MemberProfile.nickname == nickname)
     ).first()
+    if by_name is None:
+        return None
+    if tennisbear_user_id is not None and by_name.tennisbear_user_id is not None:
+        # 名前は同じだが、別の人の行だと分かっている。
+        return None
+    return by_name
 
 
 def _upsert_profile(
@@ -204,6 +217,12 @@ def _upsert_profile(
     """
     profile = find_profile(db, nickname=nickname, tennisbear_user_id=tennisbear_user_id)
     if profile is None:
+        if db.scalars(
+            select(MemberProfile).where(MemberProfile.nickname == nickname)
+        ).first() is not None:
+            # 同じ名前の別人の行がある。ニックネームは一意なので、ここで
+            # 新しい行は作れない。属性の引き継ぎを諦めるだけで害はない。
+            return
         db.add(
             MemberProfile(
                 nickname=nickname,
@@ -213,7 +232,8 @@ def _upsert_profile(
             )
         )
         return
-    profile.nickname = nickname
+    # **名前は書き換えない。** ニックネームは一意なので、別の行とぶつかると
+    # 取り込みが丸ごと失敗する。ここで覚えたいのは属性であって名前ではない。
     profile.gender = gender
     profile.level = level
     if tennisbear_user_id is not None:
@@ -243,6 +263,8 @@ def add_member(
     gender: Gender,
     level: Level,
     tennisbear_user_id: int | None = None,
+    tennisbear_nickname: str | None = None,
+    commit: bool = True,
 ) -> Member:
     """メンバーを登録する。途中参加でも公平になるよう下駄を履かせる。"""
     if not nickname.strip():
@@ -265,9 +287,15 @@ def add_member(
         level=level,
         baseline=baseline,
         tennisbear_user_id=tennisbear_user_id,
+        tennisbear_nickname=tennisbear_nickname,
     )
     db.add(member)
     _upsert_profile(db, nickname, gender, level, tennisbear_user_id)
+    if not commit:
+        # まとめて取り込むときは、最後に一度だけコミットする。
+        # 1人ずつ確定すると、途中で失敗したときに中途半端に残る。
+        db.flush()
+        return member
     db.commit()
     db.refresh(member)
     return member
@@ -369,6 +397,8 @@ class ImportResult:
     added: list[str]
     renamed: list[tuple[str, str]]
     unchanged: int
+    resting: list[str]
+    """一覧から居なくなったので休憩にした人。削除はしない（統計が壊れる）。"""
 
     @property
     def total(self) -> int:
@@ -423,8 +453,15 @@ def import_participants(
     added: list[str] = []
     renamed: list[tuple[str, str]] = []
     unchanged = 0
+    seen: set[int] = set()
 
     for participant in participants:
+        if participant.user_id in seen:
+            # 同じ人が2回出てくることがある（キャンセルして再申込など）。
+            # 見落とすと幽霊メンバーができ、毎ラウンド出場枠を1つ食う。
+            unchanged += 1
+            continue
+        seen.add(participant.user_id)
         member = by_tennisbear.get(participant.user_id)
         if member is None:
             profile = find_profile(
@@ -433,18 +470,26 @@ def import_participants(
                 tennisbear_user_id=participant.user_id,
             )
             nickname = unique_nickname(participant.nickname, taken)
-            add_member(
+            member_row = add_member(
                 db,
                 session,
                 nickname=nickname,
                 gender=profile.gender if profile else participant.gender,
                 level=profile.level if profile else participant.level,
                 tennisbear_user_id=participant.user_id,
+                tennisbear_nickname=participant.nickname,
+                commit=False,
             )
             taken.add(nickname)
             added.append(nickname)
+            by_tennisbear[participant.user_id] = member_row
             continue
 
+        if member.tennisbear_nickname == participant.nickname:
+            # 上流は変わっていない。手元で付け直した呼び名を尊重する。
+            unchanged += 1
+            continue
+        member.tennisbear_nickname = participant.nickname
         wanted = unique_nickname(participant.nickname, taken - {member.nickname})
         if wanted != member.nickname:
             before = member.nickname
@@ -455,5 +500,16 @@ def import_participants(
         else:
             unchanged += 1
 
+    # 一覧から消えた人は休憩にする。削除すると統計が壊れる（仕様）。
+    rested: list[str] = []
+    for member in existing:
+        if member.tennisbear_user_id is None or member.tennisbear_user_id in seen:
+            continue
+        if member.status is MemberStatus.ACTIVE:
+            member.status = MemberStatus.RESTING
+            rested.append(member.nickname)
+
     db.commit()
-    return ImportResult(added=added, renamed=renamed, unchanged=unchanged)
+    return ImportResult(
+        added=added, renamed=renamed, unchanged=unchanged, resting=rested
+    )

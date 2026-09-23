@@ -39,6 +39,9 @@ export const api = {
  * **待たせるときだけ**出す（速いときは何も出さない）。
  *
  * `element` に文字を書き、待っている間は点を増やして動いていることを示す。
+ *
+ * **後片付けは `element` の中身を必ず空にする**（一度も出していなくても）。
+ * ほかの文言を持たせている要素には使わないこと。
  */
 export function showWhileSlow(element, message, { after = 700 } = {}) {
   let dots = 0;
@@ -198,8 +201,13 @@ export function startPolling(run, interval) {
   let timer = null;
 
   const tick = () => {
-    run();
-    if (timer !== null) timer = setTimeout(tick, nextDelay());
+    // `run()` が同期で投げても連鎖を止めない。止まると画面が黙って
+    // 更新されなくなり、しかも `resume()` からも復帰できなくなる。
+    try {
+      run();
+    } finally {
+      if (timer !== null) timer = setTimeout(tick, nextDelay());
+    }
   };
   const resume = () => {
     if (timer === null) {
@@ -229,6 +237,17 @@ export function startPolling(run, interval) {
     stop() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       pause();
+    },
+    /** いま待っている分を捨てて、間隔を計算し直す。
+     *
+     * 間隔を伸ばしたあとで条件が変わっても、すでに仕掛かっている
+     * `setTimeout` はそのまま満了を待ってしまう。人が画面を触ったのに
+     * 最大1分戻らない、という状態になるのを防ぐ。
+     */
+    poke() {
+      if (timer === null) return; // 止まっている・見えていないときは何もしない
+      clearTimeout(timer);
+      timer = setTimeout(tick, nextDelay());
     },
   };
 }

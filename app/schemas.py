@@ -30,6 +30,7 @@ class SessionCreate(BaseModel):
 
 class SessionUpdate(BaseModel):
     name: str | None = None
+    highlight_beginners: bool | None = None
 
 
 class SessionOut(BaseModel):
@@ -40,6 +41,9 @@ class SessionOut(BaseModel):
 
     name: str
     created_at: datetime
+    highlight_beginners: bool
+    """表示画面で初心者の名前を緑にするか。アルゴリズムの確認用。"""
+
     courts: list[CourtOut]
 
 
@@ -98,6 +102,7 @@ class CourtStateOut(BaseModel):
 
     * ``match`` — この回の試合が入っている
     * ``waiting`` — まだ生成していない。「次のマッチ」を押せば入る
+    * ``next_round`` — 生成したあとに試合用へ戻したコート。次の生成から使われる
     * ``idle`` — 生成したが、出場できる人数が足りずこのコートは空き
     * ``practice`` — 練習用に試合から外している
 
@@ -115,8 +120,8 @@ class CurrentOut(BaseModel):
     revision: str
     """表示を描き直すべきときだけ変化する。
 
-    ラウンド、コート、そして食い違いの注意書き。マッチの中身を左右する値は
-    入れないので、試合中に組み合わせが動くことはない。
+    ラウンド、コート、表示設定、そして食い違いの注意書き。
+    マッチの中身を左右する値は入れないので、試合中に組み合わせが動くことはない。
     """
 
     courts: list[CourtStateOut]

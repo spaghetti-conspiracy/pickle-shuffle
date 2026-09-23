@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.models import Court, Member, PracticeSession, Round
+from app.models import Member, PracticeSession, Round
 from app.scheduler.domain import MemberStatus
+from app.scheduler.generator import PLAYERS_PER_MATCH
 from app.schemas import (
     CourtOut,
     CourtStateOut,
@@ -57,6 +58,7 @@ def _session_out(session: PracticeSession) -> SessionOut:
         token=session.token,
         name=session.name,
         created_at=session.created_at,
+        highlight_beginners=session.highlight_beginners,
         courts=[CourtOut.model_validate(c) for c in session.courts],
     )
 
@@ -82,7 +84,12 @@ def update_session(
     session_token: str, payload: SessionUpdate, db: DbSession
 ) -> SessionOut:
     session = sessions_service.get_session(db, session_token)
-    sessions_service.update_session(db, session, name=payload.name)
+    sessions_service.update_session(
+        db,
+        session,
+        name=payload.name,
+        highlight_beginners=payload.highlight_beginners,
+    )
     return _session_out(session)
 
 
@@ -224,17 +231,21 @@ def _stale_member_ids(
     return sorted(stale, key=lambda i: members[i].nickname)
 
 
-def _revision(round_: Round | None, courts: list[Court], stale_ids: list[int]) -> str:
-    """ラウンド・コートの状態と、注意書きで決まる値。
+def _revision(
+    session: PracticeSession, round_: Round | None, stale_ids: list[int]
+) -> str:
+    """ラウンド・コート・表示設定・注意書きで決まる値。
 
     マッチの中身を左右する値は入れない。メンバーを編集しても
     表示中のマッチは動かない（不変則12）。
     一方で、食い違いの注意書きは編集した瞬間に出したいので、ここに含める。
+    表示設定（名前の色分け）も試合の中身を変えないので含めてよい。
     """
-    court_part = ",".join(f"{c.id}{int(c.in_use)}" for c in courts)
+    court_part = ",".join(f"{c.id}{int(c.in_use)}" for c in session.courts)
+    display_part = int(session.highlight_beginners)
     stale_part = ",".join(str(i) for i in stale_ids)
     head = "-" if round_ is None else f"{round_.id}:{round_.status.value}"
-    return f"{head}|{court_part}|{stale_part}"
+    return f"{head}|{court_part}|{display_part}|{stale_part}"
 
 
 def _build_current(
@@ -256,6 +267,12 @@ def _build_current(
                 playing.add(member.id)
             match_by_court[match.court_id] = MatchOut(team_a=teams[0], team_b=teams[1])
 
+    waiting_count = sum(
+        1
+        for m in members.values()
+        if m.status is MemberStatus.ACTIVE and m.id not in playing
+    )
+
     court_states = []
     for court in session.courts:
         if court.id in match_by_court:
@@ -266,6 +283,11 @@ def _build_current(
             # まだ1度も生成していない（またはスキップ直後）。人数の問題ではないので、
             # 「人数が足りません」と出すと設定を疑わせてしまう。
             state = "waiting"
+        elif waiting_count >= PLAYERS_PER_MATCH:
+            # 埋められるだけの人が待っているのに試合が入っていない。
+            # 生成したあとにこのコートを試合用へ戻した、という状況。
+            # ここで「人数が足りません」と出すと、戻した操作が効いていないように見える。
+            state = "next_round"
         else:
             state = "idle"
         court_states.append(
@@ -293,11 +315,11 @@ def _build_current(
         session=_session_out(session),
         round_id=round_.id if round_ else None,
         round_status=round_.status if round_ else None,
-        revision=_revision(round_, session.courts, stale_ids),
+        revision=_revision(session, round_, stale_ids),
         courts=court_states,
         waiting=waiting,
         resting=resting,
-        stale_members=stale,
+        stale_members=sorted(stale),
         duplicate_nicknames=rounds_duplicate_names(db, round_),
         member_url=member_page_url(request, session.token) if request else "",
     )

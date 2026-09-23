@@ -54,4 +54,9 @@ $("create-session").addEventListener("click", async () => {
   }
 });
 
-loadSessions();
+loadSessions().catch((error) => {
+  // 捕まえないと、空のプルダウンが並んだ一見正常な画面になる。
+  // 既存の練習会があるのに新しく作られると、その日の記録が分断される。
+  showError(`練習会の一覧を読めません（${error.message}）`);
+  document.body.dataset.ready = "1";
+});

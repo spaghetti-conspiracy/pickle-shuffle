@@ -18,18 +18,25 @@ class CourtOut(BaseModel):
     in_use: bool
 
 
+#: 入力の長さの上限。DB の VARCHAR と揃える。SQLite は長さを無視するので、
+#: ここで止めないとローカルでは通って PostgreSQL の本番だけ 500 になる。
+NAME_MAX = 100
+NICKNAME_MAX = 50
+COURT_NAME_MAX = 50
+
+
 class CourtUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=COURT_NAME_MAX)
     in_use: bool | None = None
 
 
 class SessionCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=NAME_MAX)
     court_count: int = Field(default=2, ge=1, le=4)
 
 
 class SessionUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=NAME_MAX)
     highlight_beginners: bool | None = None
 
 
@@ -48,13 +55,13 @@ class SessionOut(BaseModel):
 
 
 class MemberCreate(BaseModel):
-    nickname: str
+    nickname: str = Field(max_length=NICKNAME_MAX)
     gender: Gender = Gender.OTHER
     level: Level = Level.PICKLEBALL
 
 
 class MemberUpdate(BaseModel):
-    nickname: str | None = None
+    nickname: str | None = Field(default=None, max_length=NICKNAME_MAX)
     gender: Gender | None = None
     level: Level | None = None
     status: MemberStatus | None = None
@@ -118,10 +125,12 @@ class CurrentOut(BaseModel):
     round_id: int | None
     round_status: RoundStatus | None
     revision: str
-    """表示を描き直すべきときだけ変化する。
+    """この応答の中身そのものの指紋。
 
-    ラウンド、コート、表示設定、そして食い違いの注意書き。
-    マッチの中身を左右する値は入れないので、試合中に組み合わせが動くことはない。
+    表示画面はこの値が変わったときだけ描き直す。中身から導くので、
+    項目を増やしても入れ忘れが起きない。
+    マッチの組み合わせはメンバーの編集では動かないため（不変則12）、
+    これが変わって描き直しても試合中に組み合わせが変わることはない。
     """
 
     courts: list[CourtStateOut]

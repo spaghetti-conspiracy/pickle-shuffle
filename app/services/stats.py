@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import Match, MatchSlot, Member, Round, RoundParticipation
 from app.scheduler.domain import (
     History,
+    Level,
     MemberStatus,
     ParticipationState,
     PlayerStat,
@@ -47,6 +48,24 @@ def participation_states(db: Session, session_id: int) -> dict[int, list[Partici
     return states
 
 
+def round_levels(db: Session, session_id: int) -> dict[int, dict[int, Level]]:
+    """ラウンドごとの、そのとき記録されたレベルを返す。
+
+    現在のレベルではなくスナップショットを使う。途中でレベルを変えても
+    過去の履歴が書き換わらないようにするため（CLAUDE.md 不変則2）。
+    """
+    rows = db.execute(
+        select(RoundParticipation.round_id, RoundParticipation.member_id, RoundParticipation.level)
+        .join(Round, Round.id == RoundParticipation.round_id)
+        .where(Round.session_id == session_id, Round.status == RoundStatus.ADOPTED)
+    ).all()
+
+    levels: dict[int, dict[int, Level]] = {}
+    for round_id, member_id, level in rows:
+        levels.setdefault(round_id, {})[member_id] = level
+    return levels
+
+
 def build_player_stats(db: Session, session_id: int) -> list[PlayerStat]:
     """生成に渡す PlayerStat の一覧。離脱済みのメンバーは含めない。"""
     members = list(
@@ -80,16 +99,10 @@ def build_player_stats(db: Session, session_id: int) -> list[PlayerStat]:
 
 def build_history(db: Session, session_id: int) -> History:
     """採用済みラウンドから、ペアと対戦の履歴を積み上げる。"""
-    beginners = {
-        member_id
-        for member_id, level in db.execute(
-            select(Member.id, Member.level).where(Member.session_id == session_id)
-        ).all()
-        if level.is_beginner
-    }
+    levels = round_levels(db, session_id)
 
     rows = db.execute(
-        select(Match.id, MatchSlot.team_index, MatchSlot.member_id)
+        select(Match.round_id, Match.id, MatchSlot.team_index, MatchSlot.member_id)
         .join(MatchSlot, MatchSlot.match_id == Match.id)
         .join(Round, Round.id == Match.round_id)
         .where(Round.session_id == session_id, Round.status == RoundStatus.ADOPTED)
@@ -97,21 +110,28 @@ def build_history(db: Session, session_id: int) -> History:
     ).all()
 
     teams: dict[int, dict[int, list[int]]] = {}
-    for match_id, team_index, member_id in rows:
+    round_of: dict[int, int] = {}
+    for round_id, match_id, team_index, member_id in rows:
+        round_of[match_id] = round_id
         teams.setdefault(match_id, {}).setdefault(team_index, []).append(member_id)
 
     history = History()
-    for sides in teams.values():
+    for match_id, sides in teams.items():
         team_a = sides.get(0, [])
         team_b = sides.get(1, [])
         if len(team_a) != 2 or len(team_b) != 2:
             continue
+        # そのラウンド時点で誰が初心者だったか。
+        at_the_time = levels.get(round_of[match_id], {})
         for team in (team_a, team_b):
             key = pair_key(*team)
             history.partner_count[key] = history.partner_count.get(key, 0) + 1
             first, second = team
-            if (first in beginners) != (second in beginners):
-                non_beginner = second if first in beginners else first
+            was_beginner = {
+                m: (m in at_the_time and at_the_time[m].is_beginner) for m in team
+            }
+            if was_beginner[first] != was_beginner[second]:
+                non_beginner = second if was_beginner[first] else first
                 history.beginner_partner_count[non_beginner] = (
                     history.beginner_partner_count.get(non_beginner, 0) + 1
                 )

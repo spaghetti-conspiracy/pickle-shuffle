@@ -164,7 +164,13 @@ def adopt(db: Session, round_: Round) -> Round:
         else:
             state = ParticipationState.SAT_OUT
         db.add(
-            RoundParticipation(round_id=round_.id, member_id=member.id, state=state)
+            RoundParticipation(
+                round_id=round_.id,
+                member_id=member.id,
+                state=state,
+                # そのときのレベルを残す。あとで変更されても履歴は動かない。
+                level=member.level,
+            )
         )
 
     round_.status = RoundStatus.ADOPTED

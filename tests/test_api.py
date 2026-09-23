@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.scheduler.domain import Gender, Level
 
 
@@ -146,6 +144,54 @@ def test_a_member_who_starts_resting_mid_round_is_flagged(client):
     after = client.get(f"/api/sessions/{session['token']}/current").json()
     nickname = next(m["nickname"] for m in members if m["id"] == playing)
     assert after["stale_members"] == [nickname]
+
+
+def test_a_level_change_mid_round_is_flagged(client):
+    """出場中の人のレベルを変えたら、表示画面に注意を出す。
+
+    表示中のマッチ自体は動かさない（不変則12）ので、
+    食い違いは注意書きでしか伝えられない。
+    """
+    session = create_session(client)
+    members = add_members(client, session["token"], 13)
+    before = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
+    playing = next(
+        p["id"]
+        for court in before["courts"]
+        if court["match"]
+        for p in court["match"]["team_a"]
+    )
+    client.patch(f"/api/members/{playing}", json={"level": Level.BEGINNER.value})
+
+    after = client.get(f"/api/sessions/{session['token']}/current").json()
+    nickname = next(m["nickname"] for m in members if m["id"] == playing)
+    assert after["stale_members"] == [nickname]
+    assert after["revision"] != before["revision"], "注意書きが出たら描き直される"
+
+    def lineup(data):
+        return [
+            (c["id"], [p["id"] for p in c["match"]["team_a"]],
+             [p["id"] for p in c["match"]["team_b"]])
+            for c in data["courts"]
+            if c["match"]
+        ]
+
+    # 色分け用にレベルは今の値を返すので、組み合わせだけを比べる。
+    assert lineup(after) == lineup(before), "マッチの組み合わせは動かさない"
+
+
+def test_editing_someone_who_is_not_playing_is_not_flagged(client):
+    """出ていない人を編集しても、注意は出さない。出すと読み上げの邪魔になる。"""
+    session = create_session(client)
+    add_members(client, session["token"], 13)
+    before = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
+    waiting = before["waiting"][0]["id"]
+
+    client.patch(f"/api/members/{waiting}", json={"level": Level.BEGINNER.value})
+
+    after = client.get(f"/api/sessions/{session['token']}/current").json()
+    assert after["stale_members"] == []
+    assert after["revision"] == before["revision"]
 
 
 # ---------------------------------------------------------------------------

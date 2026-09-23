@@ -113,13 +113,21 @@ class CurrentOut(BaseModel):
     round_id: int | None
     round_status: RoundStatus | None
     revision: str
-    """ラウンドとコートの状態が変わったときだけ変化する。メンバーの編集では変わらない。"""
+    """表示を描き直すべきときだけ変化する。
+
+    ラウンド、コート、そして食い違いの注意書き。マッチの中身を左右する値は
+    入れないので、試合中に組み合わせが動くことはない。
+    """
 
     courts: list[CourtStateOut]
     waiting: list[PlayerOut]
     resting: list[PlayerOut]
     stale_members: list[str]
-    """生成後に休憩や離脱になり、いま表示中のマッチと食い違っているメンバー。"""
+    """いま表示中のマッチと食い違っているメンバー。
+
+    生成後に休憩・離脱になった人と、生成後にレベルなどを変えた人。
+    表示中のマッチは動かさないので、食い違いはここで伝える。
+    """
 
     duplicate_nicknames: list[str]
     member_url: str = ""

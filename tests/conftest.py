@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 
 # app のモジュールを import する前に、テスト用の DB を指定しておく。
-os.environ.setdefault("DATABASE_URL", "sqlite://")
+# setdefault にしない。シェルに DATABASE_URL が export されていると
+# それが採用され、lifespan の create_all が本番 DB にテーブルを作ってしまう。
+# テストが環境に左右されないことは利点であって不便ではない。
+os.environ["DATABASE_URL"] = "sqlite://"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

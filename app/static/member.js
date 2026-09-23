@@ -43,7 +43,10 @@ let alarmDone = false;
 //: この端末で鳴らすかどうか。ほかの人の端末には影響しない。
 const SOUND_KEY = "pickle.sound";
 //: この端末で止めたラウンド。全体画面と違い、止めても他の端末は鳴り続ける。
-let silencedRound = null;
+//:
+//: **端末に覚えさせる。** メモリに置くと、画面を読み込み直しただけで
+//: 止めたことが無かったことになり、終わった試合のアラームが鳴り直す。
+const SILENCED_KEY = "pickle.silenced";
 
 function soundEnabled() {
   try {
@@ -61,12 +64,31 @@ function setSoundEnabled(on) {
   }
 }
 
+/** この端末でアラームを止めたラウンド。読み込み直しても覚えている。 */
+function silencedRound() {
+  try {
+    const raw = localStorage.getItem(SILENCED_KEY);
+    return raw === null ? null : Number(raw);
+  } catch {
+    return null;
+  }
+}
+
+function setSilencedRound(roundId) {
+  try {
+    if (roundId === null) localStorage.removeItem(SILENCED_KEY);
+    else localStorage.setItem(SILENCED_KEY, String(roundId));
+  } catch {
+    // 覚えられなくても、その場では止まる
+  }
+}
+
 /** この端末で鳴らすべきか。 */
 function shouldRingHere() {
   return (
     clock.shouldRing() &&
     soundEnabled() &&
-    silencedRound !== (lastData && lastData.round_id)
+    silencedRound() !== (lastData && lastData.round_id)
   );
 }
 
@@ -333,7 +355,7 @@ if (!sessionToken) {
 
   // この端末だけ止める。ほかの人の端末は鳴ったままにしておく。
   $("alarm-off").addEventListener("click", () => {
-    silencedRound = lastData ? lastData.round_id : null;
+    setSilencedRound(lastData ? lastData.round_id : null);
     alarm.stop();
     renderClock();
   });

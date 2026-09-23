@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from app import tennisbear
 from app.config import settings
 from app.db import get_db
 from app.models import Member, PracticeSession, Round
@@ -22,6 +23,8 @@ from app.schemas import (
     CourtStateOut,
     CourtUpdate,
     CurrentOut,
+    ImportRequest,
+    ImportResultOut,
     MatchOut,
     MemberCreate,
     MemberOut,
@@ -152,6 +155,30 @@ def add_member(
         level=payload.level,
     )
     return _member_out(member, {})
+
+
+@router.post(
+    "/sessions/{session_token}/members/import", response_model=ImportResultOut
+)
+def import_members(
+    session_token: str, payload: ImportRequest, db: DbSession
+) -> ImportResultOut:
+    """tennisbear のイベントから参加者を取り込む。
+
+    何度でも実行してよい。すでにいる人は tennisbear の ID で見分けて、
+    属性はこちらの DB を優先する（管理者が直した内容を戻さない）。
+    """
+    session = sessions_service.get_session(db, session_token)
+    html = tennisbear.fetch_event_page(
+        payload.event_id,
+        base_url=settings.tennisbear_base_url,
+        timeout=settings.tennisbear_timeout,
+    )
+    participants = tennisbear.parse_event_page(html)
+    result = sessions_service.import_participants(db, session, participants)
+    return ImportResultOut(
+        added=result.added, renamed=result.renamed, unchanged=result.unchanged
+    )
 
 
 @router.patch("/members/{member_id}", response_model=MemberOut)

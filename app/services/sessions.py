@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import ConflictError, NotFoundError, ValidationError
@@ -22,14 +24,33 @@ from app.models import (
 )
 from app.scheduler.domain import Gender, Level, MemberStatus
 from app.services import stats
+from app.tennisbear import Participant
 
 MAX_COURTS = 4
 """コート数の上限。実際の練習会で押さえられる面数から決めた。"""
+
+NICKNAME_MAX = 50
+"""ニックネームの長さの上限。DB の VARCHAR と揃える。"""
 
 
 # ---------------------------------------------------------------------------
 # 練習会とコート
 # ---------------------------------------------------------------------------
+
+
+def _reject_duplicate_name(db: Session, name: str, *, exclude_id: int | None = None) -> None:
+    """同じ名前の練習会があれば断る。
+
+    選択画面はプルダウンに名前だけを出すので、同名だと見分けられない。
+    """
+    query = select(PracticeSession).where(PracticeSession.name == name)
+    if exclude_id is not None:
+        query = query.where(PracticeSession.id != exclude_id)
+    if db.scalars(query).first() is not None:
+        raise ValidationError(
+            f"「{name}」という練習会がすでにあります。"
+            "終了させるか、別の名前にしてください。"
+        )
 
 
 def create_session(db: Session, name: str, court_count: int = 2) -> PracticeSession:
@@ -38,15 +59,25 @@ def create_session(db: Session, name: str, court_count: int = 2) -> PracticeSess
         raise ValidationError("練習会の名前を入力してください")
     if not 1 <= court_count <= MAX_COURTS:
         raise ValidationError(f"コート数は1〜{MAX_COURTS}の範囲で指定してください")
+    name = name.strip()
+    _reject_duplicate_name(db, name)
 
-    session = PracticeSession(name=name.strip(), random_seed=new_random_seed())
+    session = PracticeSession(name=name, random_seed=new_random_seed())
     db.add(session)
     db.flush()
     for index in range(court_count):
         db.add(
             Court(session_id=session.id, court_index=index, name=default_court_name(index))
         )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        # 事前の確認とコミットの間に、別の端末が同じ名前で作った。
+        db.rollback()
+        raise ValidationError(
+            f"「{name}」という練習会がすでにあります。"
+            "終了させるか、別の名前にしてください。"
+        ) from error
     db.refresh(session)
     return session
 
@@ -86,6 +117,7 @@ def update_session(
     if name is not None:
         if not name.strip():
             raise ValidationError("練習会の名前を入力してください")
+        _reject_duplicate_name(db, name.strip(), exclude_id=session.id)
         session.name = name.strip()
     if highlight_beginners is not None:
         session.highlight_beginners = highlight_beginners
@@ -137,21 +169,56 @@ def update_court(
 # ---------------------------------------------------------------------------
 
 
-def _upsert_profile(db: Session, nickname: str, gender: Gender, level: Level) -> None:
-    """ニックネームの辞書を更新する。
+def find_profile(
+    db: Session, *, nickname: str, tennisbear_user_id: int | None = None
+) -> MemberProfile | None:
+    """属性の辞書を引く。tennisbear の ID があればそちらを優先する。
+
+    ニックネームは識別子ではない（不変則14）ので、改名されると
+    名前では見失う。ID で引ければ、管理者が直したレベルが次の練習会にも残る。
+    """
+    if tennisbear_user_id is not None:
+        found = db.scalars(
+            select(MemberProfile).where(
+                MemberProfile.tennisbear_user_id == tennisbear_user_id
+            )
+        ).first()
+        if found is not None:
+            return found
+    return db.scalars(
+        select(MemberProfile).where(MemberProfile.nickname == nickname)
+    ).first()
+
+
+def _upsert_profile(
+    db: Session,
+    nickname: str,
+    gender: Gender,
+    level: Level,
+    tennisbear_user_id: int | None = None,
+) -> None:
+    """属性の辞書を更新する。
 
     属性だけを覚えておいて次の練習会で使い回す。統計は共有しない（不変則13）。
     同名が複数いても後勝ちでよい、という運用方針。
     """
-    profile = db.scalars(
-        select(MemberProfile).where(MemberProfile.nickname == nickname)
-    ).first()
+    profile = find_profile(db, nickname=nickname, tennisbear_user_id=tennisbear_user_id)
     if profile is None:
-        db.add(MemberProfile(nickname=nickname, gender=gender, level=level))
-    else:
-        profile.gender = gender
-        profile.level = level
-        profile.updated_at = utcnow()
+        db.add(
+            MemberProfile(
+                nickname=nickname,
+                gender=gender,
+                level=level,
+                tennisbear_user_id=tennisbear_user_id,
+            )
+        )
+        return
+    profile.nickname = nickname
+    profile.gender = gender
+    profile.level = level
+    if tennisbear_user_id is not None:
+        profile.tennisbear_user_id = tennisbear_user_id
+    profile.updated_at = utcnow()
 
 
 def list_profiles(db: Session) -> list[MemberProfile]:
@@ -175,6 +242,7 @@ def add_member(
     nickname: str,
     gender: Gender,
     level: Level,
+    tennisbear_user_id: int | None = None,
 ) -> Member:
     """メンバーを登録する。途中参加でも公平になるよう下駄を履かせる。"""
     if not nickname.strip():
@@ -196,9 +264,10 @@ def add_member(
         gender=gender,
         level=level,
         baseline=baseline,
+        tennisbear_user_id=tennisbear_user_id,
     )
     db.add(member)
-    _upsert_profile(db, nickname, gender, level)
+    _upsert_profile(db, nickname, gender, level, tennisbear_user_id)
     db.commit()
     db.refresh(member)
     return member
@@ -286,3 +355,105 @@ def match_duplicate_nicknames(db: Session, round_id: int | None) -> list[str]:
     ).scalars().all()
     counts = Counter(names)
     return sorted(nickname for nickname, count in counts.items() if count > 1)
+
+
+# ---------------------------------------------------------------------------
+# tennisbear からの取り込み
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    """取り込みの結果。画面にそのまま出せる粒度で返す。"""
+
+    added: list[str]
+    renamed: list[tuple[str, str]]
+    unchanged: int
+
+    @property
+    def total(self) -> int:
+        return len(self.added) + len(self.renamed) + self.unchanged
+
+
+def unique_nickname(base: str, taken: set[str]) -> str:
+    """重複しないニックネームにする。先にいる人はそのまま、後の人に番号を振る。
+
+    tennisbear の ID で区別はできるが、画面に出すには細かすぎる。
+    「マッツ」「マッツ2」なら読み上げにも使える。番号はその練習会の中でだけ
+    意味を持つ（不変則14: ニックネームは識別子ではない）。
+    """
+    base = base[:NICKNAME_MAX]
+    if base not in taken:
+        return base
+    number = 2
+    while True:
+        suffix = str(number)
+        candidate = base[: NICKNAME_MAX - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+        number += 1
+
+
+def import_participants(
+    db: Session, session: PracticeSession, participants: list[Participant]
+) -> ImportResult:
+    """イベントの参加者を練習会に取り込む。
+
+    すでに取り込んだ人は tennisbear の ID で見分ける。そのときの扱いは:
+
+    - **属性はこちらの DB を優先する。** 管理者が直したレベルや性別を、
+      取り込みのたびに戻してしまわないため
+    - **ニックネームだけは追従する。** 呼び名が変わったのに古い名前で
+      読み上げると混乱する。変えるときも重複を避けて番号を振り直す
+    - **いなくなった人は消さない。** 統計が壊れるので、手で「休憩」にしてもらう
+
+    新しく入れる人の属性は、過去の練習会で覚えた値（`member_profiles`）が
+    あればそちらを使う。無ければ tennisbear から推定した値を使う。
+    """
+    existing = list(
+        db.scalars(select(Member).where(Member.session_id == session.id))
+    )
+    by_tennisbear = {
+        member.tennisbear_user_id: member
+        for member in existing
+        if member.tennisbear_user_id is not None
+    }
+    taken = {member.nickname for member in existing}
+
+    added: list[str] = []
+    renamed: list[tuple[str, str]] = []
+    unchanged = 0
+
+    for participant in participants:
+        member = by_tennisbear.get(participant.user_id)
+        if member is None:
+            profile = find_profile(
+                db,
+                nickname=participant.nickname,
+                tennisbear_user_id=participant.user_id,
+            )
+            nickname = unique_nickname(participant.nickname, taken)
+            add_member(
+                db,
+                session,
+                nickname=nickname,
+                gender=profile.gender if profile else participant.gender,
+                level=profile.level if profile else participant.level,
+                tennisbear_user_id=participant.user_id,
+            )
+            taken.add(nickname)
+            added.append(nickname)
+            continue
+
+        wanted = unique_nickname(participant.nickname, taken - {member.nickname})
+        if wanted != member.nickname:
+            before = member.nickname
+            taken.discard(before)
+            member.nickname = wanted
+            taken.add(wanted)
+            renamed.append((before, wanted))
+        else:
+            unchanged += 1
+
+    db.commit()
+    return ImportResult(added=added, renamed=renamed, unchanged=unchanged)

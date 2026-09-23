@@ -54,6 +54,23 @@ class SessionOut(BaseModel):
     courts: list[CourtOut]
 
 
+class ImportRequest(BaseModel):
+    """tennisbear のイベントID。URL の下から2番目の数字。"""
+
+    event_id: int = Field(ge=1)
+
+
+class ImportResultOut(BaseModel):
+    added: list[str]
+    """新しく登録したニックネーム。"""
+
+    renamed: list[tuple[str, str]]
+    """呼び名が変わった人。(前, 後)。"""
+
+    unchanged: int
+    """すでに登録済みで、変更が無かった人数。"""
+
+
 class MemberCreate(BaseModel):
     nickname: str = Field(max_length=NICKNAME_MAX)
     gender: Gender = Gender.OTHER

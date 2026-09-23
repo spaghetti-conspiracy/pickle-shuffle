@@ -5,9 +5,16 @@
  * 全体表示画面でリーダーが次のマッチに進めると、ここも自動で追従する。
  */
 
-import { api, currentSessionToken, rememberSessionToken, startPolling } from "/api.js";
+import {
+  $,
+  api,
+  createGate,
+  currentSessionToken,
+  playerLabel,
+  rememberSessionToken,
+  startPolling,
+} from "/api.js";
 
-const $ = (id) => document.getElementById(id);
 // 読むだけの画面なので、全体表示画面より緩くてよい。
 // 人数ぶんの端末が同時に叩くため、間隔を詰めすぎると通信量が効いてくる。
 const POLL_INTERVAL_MS = 5000;
@@ -17,6 +24,8 @@ const storageKey = `pickle.court.${sessionToken}`;
 let selectedCourtId = null;
 let lastRevision = null;
 let poller = null;
+let lastData = null;
+const gate = createGate();
 
 /** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
 const EMPTY_COURT_MESSAGE = {
@@ -44,27 +53,6 @@ function restoreCourt() {
   }
 }
 
-/** 名前の色分け。男女の区分が一目で分かるようにする。
- *
- * 初心者を緑にするかどうかは練習会の設定で切り替える。緑はアルゴリズムの
- * 確認用で、ふだんは男女の区分だけで色を付ける。
- */
-function toneOf(player, highlightBeginners) {
-  if (highlightBeginners && player.level === "beginner") return "beginner";
-  return player.gender;
-}
-
-/** 名前を1行に収める。長い名前は文字数に応じて縮める。 */
-function playerLabel(player, highlightBeginners) {
-  const label = document.createElement("div");
-  label.className = "player";
-  label.textContent = player.nickname;
-  label.dataset.tone = toneOf(player, highlightBeginners);
-  // 全角1文字をほぼ1em とみなし、収まる大きさを CSS 側で逆算させる。
-  label.style.setProperty("--len", String(Math.max(player.nickname.length, 3)));
-  return label;
-}
-
 function renderTabs(courts) {
   const tabs = $("tabs");
   tabs.innerHTML = "";
@@ -72,15 +60,26 @@ function renderTabs(courts) {
     const tab = document.createElement("button");
     tab.className = "tab";
     tab.type = "button";
-    tab.role = "tab";
+    // プロパティ代入（tab.role / tab.ariaSelected）は新しめの端末しか反映しない。
+    // 古い iPhone では属性が付かず、選択中のタブに色が出なくなる。
+    tab.setAttribute("role", "tab");
     tab.textContent = court.name;
-    tab.ariaSelected = String(court.id === selectedCourtId);
+    const selected = court.id === selectedCourtId;
+    tab.setAttribute("aria-selected", String(selected));
     tab.addEventListener("click", () => {
       rememberCourt(court.id);
-      // 押した結果はすぐ見せる。次のポーリングを待たせない。
-      lastRevision = null;
-      refresh();
+      // 手元のデータで描き直す。通信の往復を待たせない。
+      // 体育館の WiFi は人数ぶんの端末がぶら下がって遅くなるので、
+      // 待たせるとタップが効かない画面になる。表示に必要な情報は
+      // どのコートぶんも同じ応答に入っている。
+      if (lastData) render(lastData);
     });
+    if (selected) {
+      // 前回の続きで開くと、選択中のタブが画面外にいることがある。
+      requestAnimationFrame(() =>
+        tab.scrollIntoView({ inline: "nearest", block: "nearest" }),
+      );
+    }
     tabs.append(tab);
   }
 }
@@ -119,6 +118,7 @@ function renderCourt(court, highlightBeginners) {
 }
 
 function render(data) {
+  lastData = data;
   const highlightBeginners = data.session.highlight_beginners;
   document.title = `${data.session.name} — コート表示`;
   $("session-name").textContent = data.session.name;
@@ -139,9 +139,19 @@ function render(data) {
   $("waiting").textContent = parts.join("　/　");
 }
 
+function setOffline(message) {
+  const element = $("offline");
+  element.textContent = message;
+  element.classList.toggle("hidden", !message);
+}
+
 async function refresh() {
+  const token = gate.token();
   try {
     const data = await api.get(`/api/sessions/${sessionToken}/current`);
+    if (gate.isStale(token)) return;
+    setOffline("");
+    lastData = data;
     // リーダーがマッチを進めたときだけ描き直す。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
@@ -152,7 +162,8 @@ async function refresh() {
       showGone();
     } else {
       // 一時的な通信の失敗。次のポーリングで復帰する見込みなので画面は残す。
-      $("status").textContent = `通信できません（${error.message}）`;
+      // #status を潰すと、今が試合中かどうかも分からなくなる。
+      setOffline(`通信できません（${error.message}）`);
     }
   } finally {
     document.body.dataset.ready = "1";

@@ -7,6 +7,9 @@
       "includeFiles": "app/**"
     }
   },
+  "git": {
+    "deploymentEnabled": false
+  },
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index" }
   ]

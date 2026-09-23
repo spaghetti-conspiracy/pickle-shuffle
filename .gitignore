@@ -219,3 +219,14 @@ __marimo__/
 
 # 練習会の記録（SQLite のファイル置き場）
 data/
+
+# Vercel CLI が作る。orgId / projectId が入る（秘密ではないが、
+# 手元の紐づけなのでリポジトリには入れない）。
+.vercel/
+
+# 手元で CI の手順を再現したときの残骸。認証クッキーや使い捨ての DB を
+# 取り込まないための歯止め。
+ci.db
+ci.db-*
+cookie.txt
+*.sqlite

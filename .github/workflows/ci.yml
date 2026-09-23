@@ -1,0 +1,278 @@
+# テストと lint。`main` への push と、すべての PR で走らせる。
+#
+# 見ているのは3つ:
+#
+# 1. 手元と同じやり方（uv + pyproject）でテストが通ること
+# 2. **Vercel と同じ Python と同じ依存（requirements.txt）で起動できること。**
+#    本番だけ壊れる、を防ぐ。依存の指定が2か所にあるので、ずれると気づけない
+# 3. コンテナが組み上がること。README の手順どおりに動かせること
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# PR に続けて push したら、古い実行は止める。
+# **main の実行は止めない。** 途中のコミットの CI が cancelled で終わると、
+# そのコミットにタグを打ったとき release の guard が落ちる。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: テスト (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 は手元の venv、3.12 は Vercel のランタイム。
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv を入れる
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 依存を入れる
+        # `--frozen` でロックどおりに入れる。CI と手元と本番で版がずれない。
+        run: uv sync --frozen --python ${{ matrix.python }}
+
+      - name: lint
+        run: uv run ruff check .
+
+      - name: テスト
+        # DB は決め打ちにする。シェルに DATABASE_URL があると、conftest が
+        # 上書きするとはいえ、取り違えに気づきにくい。
+        env:
+          DATABASE_URL: "sqlite://"
+        run: uv run pytest
+
+  serverless:
+    name: Vercel と同じ形で起動する
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 本番と同じ依存を入れる
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 本番と同じ形で起動して叩く
+        # Vercel が使うのは api/index.py。ここが読めなければ本番は 500 になる。
+        # **TestClient は使わない。** あれは開発用の依存（httpx2）を要求するので、
+        # 本番の依存だけで動くことの確認にならない。実際に起動して HTTP で叩く。
+        # VERCEL を立てて、サーバーレス向けの分岐も通しておく。
+        env:
+          VERCEL: "1"
+          DATABASE_URL: "sqlite:///${{ runner.temp }}/ci.db"
+          ADMIN_PASSWORD: "ciあいことば"
+        run: |
+          set -euo pipefail
+          # **PID を控えて必ず落とす。** 残したままだと、ジョブの後処理
+          # （uv のキャッシュ整理）が掴まれたまま終わらない。
+          python -m uvicorn api.index:app --port 8000 &
+          echo $! > uvicorn.pid
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/health >/dev/null && break
+            sleep 1
+          done
+          test "$(curl -s http://127.0.0.1:8000/api/health)" = '{"status":"ok"}'
+
+          # 合言葉の門が効いていること。ここが開いていたら本番が丸見えになる。
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/sessions)
+          test "$code" = "401" || { echo "合言葉なしで通っている ($code)"; exit 1; }
+
+          curl -sf -c cookie.txt -X POST -H 'Content-Type: application/json' \
+            -d '{"password":"ciあいことば"}' http://127.0.0.1:8000/api/login
+          code=$(curl -s -b cookie.txt -o /dev/null -w '%{http_code}' \
+                 http://127.0.0.1:8000/api/sessions)
+          test "$code" = "200" || { echo "合言葉が通らない ($code)"; exit 1; }
+
+          # メンバー用画面が使う静的ファイルも配れていること。
+          curl -sf http://127.0.0.1:8000/member.html >/dev/null
+          echo "本番と同じ依存で起動し、合言葉の門まで確認できた"
+
+      - name: サーバを落とす
+        if: always()
+        run: '[ -f uvicorn.pid ] && kill "$(cat uvicorn.pid)" || true' 
+
+  postgres:
+    name: 本番と同じ DB で通す
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pickle
+          POSTGRES_PASSWORD: pickle
+          POSTGRES_DB: pickle
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      # 本番は Neon（PostgreSQL）。テストは SQLite なので、型や制約の
+      # 違いで**本番だけ壊れる**経路がここにしか無い。
+      DATABASE_URL: postgresql+psycopg://pickle:pickle@localhost:5432/pickle
+      ADMIN_PASSWORD: "ciあいことば"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 依存を入れる（postgres のドライバ込み）
+        run: uv sync --frozen --extra postgres
+
+      - name: テーブルを作る
+        run: uv run python -m app.init_db
+
+      - name: 移行スクリプトが流せるか
+        # 作り直したばかりの DB に対しても、何度流しても壊れないこと。
+        run: |
+          set -euo pipefail
+          for script in scripts/migrate_*.py; do
+            [ -e "$script" ] || continue
+            echo "--- $script"
+            uv run python "$script" --dry-run
+            uv run python "$script"
+            uv run python "$script"   # 2回流しても壊れない
+          done
+
+      - name: 起動して読み書きする
+        run: |
+          set -euo pipefail
+          uv run uvicorn app.main:app --port 8000 &
+          echo $! > uvicorn.pid
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/health > /dev/null && break
+            sleep 1
+          done
+          jq -n --arg p "$ADMIN_PASSWORD" '{password: $p}' > login.json
+          curl -sf -c cookie.txt -X POST -H 'Content-Type: application/json' \
+            -d @login.json http://127.0.0.1:8000/api/login > /dev/null
+
+          # 練習会を作り、台帳から参加者を8人入れて、マッチを組んで開始する。
+          # 一意制約や enum の扱いが DB で違えば、このどこかで落ちる。
+          token=$(curl -sf -b cookie.txt -X POST -H 'Content-Type: application/json' \
+            -d '{"name": "ci", "court_count": 2}' http://127.0.0.1:8000/api/sessions \
+            | jq -er .token)
+          for i in $(seq 1 8); do
+            curl -sf -b cookie.txt -X POST -H 'Content-Type: application/json' \
+              -d "{\"nickname\": \"p$i\"}" \
+              "http://127.0.0.1:8000/api/sessions/$token/members" > /dev/null
+          done
+          round=$(curl -sf -b cookie.txt -X POST \
+            "http://127.0.0.1:8000/api/sessions/$token/rounds/generate" | jq -er .round_id)
+          curl -sf -b cookie.txt -X POST "http://127.0.0.1:8000/api/rounds/$round/adopt" \
+            | jq -e '.courts | length == 2' > /dev/null
+          curl -sf -b cookie.txt "http://127.0.0.1:8000/api/sessions/$token/stats" \
+            | jq -e '[.play_counts | to_entries[] | .value] | add == 8' > /dev/null
+
+          # 同じ人を二重に入れられないこと（一意制約が効いているか）。
+          person=$(curl -sf -b cookie.txt \
+            "http://127.0.0.1:8000/api/sessions/$token/members" | jq -er '.[0].person_id')
+          code=$(curl -s -b cookie.txt -o /dev/null -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' -d "{\"person_id\": $person}" \
+            "http://127.0.0.1:8000/api/sessions/$token/members")
+          test "$code" = "422" || { echo "二重登録が通った ($code)"; exit 1; }
+          echo "PostgreSQL で読み書きと制約の確認 OK"
+
+      - name: サーバを落とす
+        if: always()
+        run: '[ -f uvicorn.pid ] && kill "$(cat uvicorn.pid)" || true' 
+
+  container:
+    name: コンテナが組み上がる
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker build
+        run: docker build -t pickle-shuffle:ci .
+
+      - name: 起動して応答するか
+        run: |
+          docker run -d --name ci -p 8000:8000 \
+            -e DATABASE_URL=sqlite:///./data/ci.db pickle-shuffle:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/api/health > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:8000/api/health
+          # 画面まで配れているか。README の手順で動かせることの確認。
+          curl -sf http://localhost:8000/ > /dev/null
+          curl -sf http://localhost:8000/member.html > /dev/null
+
+      - name: 落ちたときのログ
+        if: failure()
+        run: docker logs ci
+
+      - name: 片付ける
+        if: always()
+        run: docker rm -f ci || true
+
+  browser:
+    # **main に入ったときだけ**。PR は速い一式で通し、ここは release の前提にする。
+    if: github.event_name == 'push'
+    name: ブラウザで主要な径路を通す
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 依存を入れる
+        # playwright は dev グループに入れてある（`uv pip install` に頼ると、
+        # そこが黙って効かなくなった日に 0 件実行で緑になる）。
+        run: uv sync --frozen --python 3.12
+
+      - name: playwright の版を控える
+        id: pw
+        # キーに版を入れないと、上げたあともキャッシュに当たって古い
+        # ブラウザを使い続ける。
+        run: |
+          version=$(uv run python -c \
+            'from importlib.metadata import version; print(version("playwright"))')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Chromium をキャッシュから
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Chromium を入れる
+        run: uv run playwright install --with-deps chromium
+
+      - name: 画面を操作する
+        # **本数を数える。** release の前提にしているので、0 件実行で緑に
+        # なる状態を許さない（環境が壊れたら落ちてほしい）。
+        run: |
+          set -euo pipefail
+          uv run pytest -m browser | tee result.txt
+          grep -qE "[1-9][0-9]* passed" result.txt \
+            || { echo "::error::ブラウザテストが1件も走っていない"; exit 1; }

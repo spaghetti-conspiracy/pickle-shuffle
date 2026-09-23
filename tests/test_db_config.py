@@ -32,13 +32,18 @@ def test_serverless_reuses_one_connection(monkeypatch):
     **ユーザー承認済みの方針変更。**
 
     一方で貯め込みもしない。関数は同時に何十個も立ち上がるので、
-    1本ずつでも DB 側の上限には届く。
+    1本ずつでも DB 側の上限には届く。**貯め込まないのは `pool_size=1`**
+    （定常で持ち続ける本数）が担っている。
+
+    あふれ分を 0 にはしない。API は全部同期の `def` なので1インスタンスが
+    同時に複数のリクエストを捌き、1本に直列化すると待ち行列が伸びて 500 に
+    なる。あふれた接続は返却時に閉じるので、持ち続けることにはならない。
     """
     monkeypatch.setattr(db, "IS_SERVERLESS", True)
     kwargs = db._engine_kwargs("postgresql+psycopg://user:pw@host/db")
     assert kwargs["poolclass"] is not NullPool, "毎回張り直す設定に戻っている"
-    assert kwargs["pool_size"] == 1
-    assert kwargs["max_overflow"] == 0, "貯め込まない"
+    assert kwargs["pool_size"] == 1, "定常で持ち続けるのは1本"
+    assert 0 < kwargs["max_overflow"] <= 4, "同時に来たぶんを捌けず、かつ貯め込まない"
     assert kwargs["pool_pre_ping"] is True, "切れた接続を掴んだまま使わない"
 
 

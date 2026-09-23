@@ -87,7 +87,8 @@ jobs:
         # Vercel が使うのは api/index.py。ここが読めなければ本番は 500 になる。
         # **TestClient は使わない。** あれは開発用の依存（httpx2）を要求するので、
         # 本番の依存だけで動くことの確認にならない。実際に起動して HTTP で叩く。
-        # VERCEL を立てて、サーバーレス向けの分岐も通しておく。
+        # VERCEL は立てるが、DB は SQLite なので接続プールの分岐には入らない
+        # （そちらは「本番と同じ DB で通す」ジョブが受け持つ）。
         env:
           VERCEL: "1"
           DATABASE_URL: "sqlite:///${{ runner.temp }}/ci.db"
@@ -142,6 +143,9 @@ jobs:
       # 違いで**本番だけ壊れる**経路がここにしか無い。
       DATABASE_URL: postgresql+psycopg://pickle:pickle@localhost:5432/pickle
       ADMIN_PASSWORD: "ciあいことば"
+      # **接続プールの設定も本番と同じにする。** SQLite では別の分岐に入るので、
+      # `QueuePool` の設定が実際に効くのはここだけ。
+      VERCEL: "1"
     steps:
       - uses: actions/checkout@v4
 

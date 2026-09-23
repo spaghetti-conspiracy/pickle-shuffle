@@ -36,6 +36,9 @@ let serverInstance = null;
 const alarm = createAlarm();
 const CLOCK_INTERVAL_MS = 250;
 let confirming = false;
+//: 最後にサーバへ確かめた時刻。間隔を空けないと秒4回叩いてしまう。
+let lastConfirmAt = 0;
+const CONFIRM_INTERVAL_MS = 1000;
 let alarmDone = false;
 //: この端末で鳴らすかどうか。ほかの人の端末には影響しない。
 const SOUND_KEY = "pickle.sound";
@@ -219,6 +222,13 @@ function renderClock() {
   }
   const left = clock.remaining();
   element.textContent = left <= 0 ? "試合終了" : formatClock(left);
+  if (left > 0 && state === "paused") {
+    // 数字が止まっているだけだと、通信が切れたのか止められたのか分からない。
+    const note = document.createElement("span");
+    note.className = "clock-note";
+    note.textContent = "一時停止中";
+    element.append(note);
+  }
   element.dataset.state = left <= 0 ? "over" : state === "paused" ? "paused" : "running";
 
   if (left <= 0 && state === "running" && !alarmDone && !confirming && soundEnabled()) {
@@ -230,8 +240,14 @@ function renderClock() {
   if (left > 0) alarmDone = false;
 }
 
-/** 手元で切れたので、サーバに確かめてから鳴らす。 */
+/** 手元で切れたので、サーバに確かめてから鳴らす。
+ *
+ * 人数ぶんの端末が同じ瞬間に時間切れになるので、間隔を空けないと
+ * 全員が一斉に秒4回叩く。手元の描画は250ms周期だが、確かめるのは1秒に1回でよい。
+ */
 async function confirmTimeout() {
+  if (performance.now() - lastConfirmAt < CONFIRM_INTERVAL_MS) return;
+  lastConfirmAt = performance.now();
   confirming = true;
   try {
     const data = await api.get(`/api/sessions/${sessionToken}/current`);
@@ -241,11 +257,17 @@ async function confirmTimeout() {
     serverInstance = data.server_instance;
     clock.sync(data.timer);
     lastData = data;
-    if (shouldRingHere() && !alarmDone) {
-      alarmDone = true;
-      alarm.start();
+    if (shouldRingHere()) {
+      if (!alarmDone) {
+        alarmDone = true;
+        alarm.start();
+      }
+    } else {
+      // 鳴らさないと決まった（ほかの端末で止められた・この端末は鳴らさない設定）。
+      // ここで打ち切らないと、鳴らないまま確かめ続けてしまう。
+      alarm.stop();
+      if (clock.isTimedOut()) alarmDone = true;
     }
-    if (!shouldRingHere()) alarm.stop();
   } catch {
     // つながらなければ次のポーリングでやり直す。鳴らさない。
   } finally {

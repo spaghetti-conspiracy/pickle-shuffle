@@ -14,9 +14,9 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import tennisbear
-from app.config import settings
+from app.config import IS_SERVERLESS, settings
 from app.db import get_db
-from app.errors import ValidationError
+from app.errors import ConflictError, ValidationError
 from app.models import Member, PracticeSession, Round, TimerState
 from app.scheduler.domain import MemberStatus, RoundStatus
 from app.scheduler.generator import PLAYERS_PER_MATCH
@@ -48,7 +48,9 @@ from app.services import stats as stats_service
 #: 表示画面はこれを覚えていて、変わったら「サーバが再起動しました」と伝える。
 #: 再起動をまたぐと、応答が一時的に途切れたり、作り直した直後なら記録が
 #: 消えていたりする。黙っていると「時計が狂った」ようにしか見えない。
-SERVER_INSTANCE = secrets.token_hex(8)
+#: サーバーレスでは関数インスタンスが複数同時に生きるので、プロセスを
+#: 識別しても意味が無い。空にして、画面側の知らせを出さないようにする。
+SERVER_INSTANCE = "" if IS_SERVERLESS else secrets.token_hex(8)
 
 router = APIRouter(prefix="/api")
 
@@ -212,6 +214,9 @@ def control_timer(
     開始は採用（`/adopt`）と同時なので、ここには無い。
     """
     round_ = rounds_service.get_round(db, round_id)
+    if round_.status is not RoundStatus.ADOPTED:
+        # 開始前のラウンドを消音すると、始めた瞬間から鳴らない試合になる。
+        raise ConflictError("始まっていないマッチの時計は操作できません")
     handlers = {
         "pause": rounds_service.pause_timer,
         "resume": rounds_service.resume_timer,
@@ -322,12 +327,15 @@ def _timer_out(session: PracticeSession, round_: Round | None) -> TimerOut:
             alarm_silenced=False,
         )
     elapsed = rounds_service.elapsed_seconds(round_)
+    timed_out = bool(limit) and elapsed >= limit
     return TimerOut(
         state=round_.timer_state.value,
         limit_seconds=limit,
         elapsed_seconds=elapsed,
-        timed_out=bool(limit) and elapsed >= limit,
-        alarm_silenced=round_.timer_alarm_silenced,
+        timed_out=timed_out,
+        # 持ち時間を延ばして時間内に戻ったら、消音も解く。残したままだと、
+        # 延長後に本当に時間切れになったとき、全端末で無音になる。
+        alarm_silenced=round_.timer_alarm_silenced and timed_out,
     )
 
 
@@ -343,7 +351,10 @@ def _revision_of(payload: CurrentOut) -> str:
     動くのは名前・色・注意書きといった表示だけで、それは動いてほしい。
     """
     # timer は毎回変わるので指紋に入れない。入れると2秒ごとに描き直しになる。
-    body = payload.model_dump_json(exclude={"revision", "timer"})
+    # timer は毎回変わるので指紋に入れない。入れると2秒ごとに描き直しになる。
+    # server_instance も同じ。サーバーレスでは関数インスタンスごとに違う値になり、
+    # リクエストのたびに指紋が変わってしまう。
+    body = payload.model_dump_json(exclude={"revision", "timer", "server_instance"})
     return hashlib.blake2b(body.encode("utf-8"), digest_size=8).hexdigest()
 
 

@@ -106,20 +106,6 @@ a {
   font-weight: 700;
 }
 
-.gone p {
-  margin: 0;
-}
-
-/* 案内は本文より小さく。読ませたいのは「終了している」ことの方。 */
-.gone .notice {
-  font-size: 0.9rem;
-  font-weight: 400;
-  max-width: 24rem;
-}
-
-.gone .notice a {
-  font-size: 1.1rem;
-}
 
 .gone p {
   margin: 0;

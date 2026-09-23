@@ -214,10 +214,8 @@ def adopt(db: Session, round_: Round) -> Round:
             )
         )
 
-    # 開始と同時に試合時計を動かす。
-    round_.timer_state = TimerState.RUNNING
-    round_.timer_started_at = utcnow()
-    round_.timer_elapsed_seconds = 0
+    # 開始と同時に試合時計を動かす。前の状態は持ち越さない。
+    _reset_timer(round_)
 
     try:
         db.commit()
@@ -285,8 +283,31 @@ def get_round(db: Session, round_id: int) -> Round:
 # 持ち時間の設定を変えても、その場で正しい残り時間になる。
 # ---------------------------------------------------------------------------
 
-TIMER_MIN_MINUTES = 3
-TIMER_MAX_MINUTES = 15
+def _reset_timer(round_: Round) -> None:
+    """時計を動かし始める状態にする。採用のたびに仕切り直す。
+
+    消音の印を残すと、始めた瞬間から鳴らない試合になる。
+    """
+    round_.timer_state = TimerState.RUNNING
+    round_.timer_started_at = utcnow()
+    round_.timer_elapsed_seconds = 0
+    round_.timer_alarm_silenced = False
+
+
+def _claim_timer(
+    db: Session, round_: Round, expected: TimerState, new: TimerState, **values: object
+) -> bool:
+    """時計の状態を条件付きで書き換え、自分が遷移させたかを返す。
+
+    在メモリの値を見てから書くと、別の端末が先に操作していても素通りする。
+    「中断」が 200 を返したのに一時停止のまま、といったことが起きる。
+    """
+    result = db.execute(
+        update(Round)
+        .where(Round.id == round_.id, Round.timer_state == expected)
+        .values(timer_state=new, **values)
+    )
+    return result.rowcount == 1
 
 
 def elapsed_seconds(round_: Round) -> int:
@@ -297,23 +318,18 @@ def elapsed_seconds(round_: Round) -> int:
     return max(total, 0)
 
 
-def start_timer(db: Session, round_: Round) -> Round:
-    """時計を動かし始める。採用（=開始）と同時に呼ぶ。"""
-    round_.timer_state = TimerState.RUNNING
-    round_.timer_started_at = utcnow()
-    round_.timer_elapsed_seconds = 0
-    db.commit()
-    db.refresh(round_)
-    return round_
-
-
 def pause_timer(db: Session, round_: Round) -> Round:
     """一時停止。経過を積んで止める。あとで再開できる。"""
-    if round_.timer_state is not TimerState.RUNNING:
+    if not _claim_timer(
+        db,
+        round_,
+        TimerState.RUNNING,
+        TimerState.PAUSED,
+        timer_elapsed_seconds=elapsed_seconds(round_),
+        timer_started_at=None,
+    ):
+        db.rollback()
         raise ConflictError("動いている時計がありません")
-    round_.timer_elapsed_seconds = elapsed_seconds(round_)
-    round_.timer_started_at = None
-    round_.timer_state = TimerState.PAUSED
     db.commit()
     db.refresh(round_)
     return round_
@@ -321,10 +337,15 @@ def pause_timer(db: Session, round_: Round) -> Round:
 
 def resume_timer(db: Session, round_: Round) -> Round:
     """一時停止から再開する。"""
-    if round_.timer_state is not TimerState.PAUSED:
+    if not _claim_timer(
+        db,
+        round_,
+        TimerState.PAUSED,
+        TimerState.RUNNING,
+        timer_started_at=utcnow(),
+    ):
+        db.rollback()
         raise ConflictError("止まっている時計がありません")
-    round_.timer_started_at = utcnow()
-    round_.timer_state = TimerState.RUNNING
     db.commit()
     db.refresh(round_)
     return round_
@@ -339,14 +360,23 @@ def silence_alarm(db: Session, round_: Round) -> Round:
 
 
 def stop_timer(db: Session, round_: Round) -> Round:
-    """中断する。一時停止と違い、この試合の時計はもう表示しない。
+    """中断する。一時停止と違い、あとで再開しない。
 
-    試合を打ち切って次へ進むときに使う。
+    試合を打ち切って次へ進むときに使う。動いていても止まっていても押せる。
     """
-    round_.timer_elapsed_seconds = elapsed_seconds(round_)
-    round_.timer_started_at = None
-    round_.timer_state = TimerState.STOPPED
-    round_.timer_alarm_silenced = True  # 中断したのに鳴り続けない
-    db.commit()
-    db.refresh(round_)
-    return round_
+    elapsed = elapsed_seconds(round_)
+    for state in (TimerState.RUNNING, TimerState.PAUSED):
+        if _claim_timer(
+            db,
+            round_,
+            state,
+            TimerState.STOPPED,
+            timer_elapsed_seconds=elapsed,
+            timer_started_at=None,
+            timer_alarm_silenced=True,  # 中断したのに鳴り続けない
+        ):
+            db.commit()
+            db.refresh(round_)
+            return round_
+    db.rollback()
+    raise ConflictError("この試合の時計はすでに終わっています")

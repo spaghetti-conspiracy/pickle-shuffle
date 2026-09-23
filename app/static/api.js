@@ -209,6 +209,10 @@ export function createClock() {
       const left = this.remaining();
       return left !== null && left <= 0;
     },
+    /** 止める指示が来ているか。 */
+    isSilenced() {
+      return timer !== null && Boolean(timer.alarm_silenced);
+    },
     /** いま鳴らすべきか。止めた指示が来ていれば鳴らさない。 */
     shouldRing() {
       return (

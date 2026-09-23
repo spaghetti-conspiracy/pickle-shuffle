@@ -109,6 +109,9 @@ async function load() {
   body.innerHTML = "";
   for (const person of people) {
     const row = document.createElement("tr");
+    // 行を名前で指せるようにしておく。一覧は名前順に並ぶので、番号で指すと
+    // 改名や削除で描き直したときに別の行を掴む。
+    row.dataset.nickname = person.nickname;
 
     const gender = document.createElement("td");
     gender.append(attributeSelect(person, "gender", GENDER_LABELS));

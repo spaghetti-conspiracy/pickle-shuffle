@@ -22,6 +22,9 @@ dev = [
     "pytest>=8.0",
     "httpx2>=2.13",
     "ruff>=0.4",
+    # ブラウザテスト用。**dev に入れておく。** 入っていないと
+    # `pytest -m browser` が「0件実行で緑」になり、release の前提が空振りする。
+    "playwright>=1.44",
 ]
 
 [build-system]
@@ -36,7 +39,14 @@ app = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# リポジトリのルートを import できるようにする。テスト同士が
+# `from tests.test_api import ...` で助け合っているため。
+# `python -m pytest` では CWD が入るので気づけない（`pytest` では入らない）。
+pythonpath = ["."]
+# ブラウザテストは既定で外す。Playwright を入れていない手元でも、
+# ユニットテストはそのまま通る。走らせるときは `pytest -m browser`。
+addopts = "-q -m 'not browser'"
+markers = ["browser: 実際のブラウザで画面を操作する（Playwright が要る）"]
 
 [tool.ruff]
 line-length = 100

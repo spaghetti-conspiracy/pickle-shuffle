@@ -1,0 +1,117 @@
+# release を打ったら本番へ出す。
+#
+# **そのコミットの CI が all green であることを先に確かめる。**
+# release は手で打つものなので、うっかり赤いコミットに打ててしまう。
+name: Release
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: CI が通っているか確かめる
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # CI の実行結果を読むために要る。既定が制限モードの組織では
+      # これが無いと 403 で guard が落ちる。
+      actions: read
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: このコミットの CI を見る
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # 注釈付きタグでも、この API はタグが指すコミットの SHA を返す。
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          echo "release のコミット: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+          # **main に入っているコミットか。** 入っていなければ、PR の途中の
+          # コミットにタグを打ったということ。
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$sha" origin/main \
+            || { echo "::error::$TAG は main に入っていない"; exit 1; }
+
+          # **main への push で走った CI だけを見る。**
+          # PR の CI はブラウザテストが skip され、それでも全体は success に
+          # なるので、これを許すと画面の確認を一度も通さずに本番へ出せる。
+          runs=$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
+                 --jq '[.workflow_runs[]
+                        | select(.name == "CI" and .event == "push"
+                                 and .head_branch == "main")]')
+          if [ "$(echo "$runs" | jq 'length')" = "0" ]; then
+            echo "::error::このコミットで main の CI が走っていない"
+            exit 1
+          fi
+          status=$(echo "$runs" | jq -r '.[0].status')
+          conclusion=$(echo "$runs" | jq -r '.[0].conclusion')
+          echo "CI: status=$status conclusion=$conclusion"
+          test "$status" = "completed" || { echo "::error::CI がまだ終わっていない"; exit 1; }
+          test "$conclusion" = "success" || { echo "::error::CI が通っていない"; exit 1; }
+
+          # ブラウザテストが本当に走ったか。skip のまま素通りさせない。
+          run_id=$(echo "$runs" | jq -r '.[0].id')
+          browser=$(gh api "repos/$REPO/actions/runs/$run_id/jobs" \
+                    --jq '[.jobs[] | select(.name | startswith("ブラウザ"))] | .[0].conclusion')
+          echo "ブラウザテスト: $browser"
+          test "$browser" = "success" \
+            || { echo "::error::ブラウザテストが通っていない ($browser)"; exit 1; }
+
+  deploy:
+    name: 本番へ出す
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # guard が確かめた**そのコミット**を出す。タグは動かせるので、
+          # 名前で取り直すと確認したものと別物が出かねない。
+          ref: ${{ needs.guard.outputs.sha }}
+
+      - name: Vercel へ出す（Production）
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_CLI_VERSION: "48.2.11"
+        run: |
+          npx --yes vercel@$VERCEL_CLI_VERSION pull --yes --environment=production --token "$VERCEL_TOKEN"
+          npx --yes vercel@$VERCEL_CLI_VERSION build --prod --token "$VERCEL_TOKEN"
+          url=$(npx --yes vercel@$VERCEL_CLI_VERSION deploy --prebuilt --prod --token "$VERCEL_TOKEN")
+          echo "production: $url"
+          echo "production: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 出たものが応答するか
+        env:
+          PRODUCTION_URL: ${{ vars.PRODUCTION_DOMAIN }}
+        run: |
+          if [ -z "$PRODUCTION_URL" ]; then
+            echo "PRODUCTION_DOMAIN が未設定。確認は省略する。"
+            exit 0
+          fi
+          for i in $(seq 1 20); do
+            curl -sf "https://$PRODUCTION_URL/api/health" && exit 0
+            sleep 5
+          done
+          echo "本番が応答しない"; exit 1

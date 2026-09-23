@@ -1,0 +1,189 @@
+# main に入ったコードを staging へ出す。
+#
+# **CI が all green のときだけ**動かす（`workflow_run` の conclusion を見る）。
+# 本番は release を打ったときだけ（`release.yml`）。
+name: Deploy staging
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+# 出すだけなので、読めれば足りる。`workflow_run` のジョブは**ベースリポジトリの
+# 文脈で全 secrets 付き**に走るので、既定の書き込み権限を持たせない。
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: staging へ出す
+    # 3つとも満たすときだけ出す。
+    #
+    # - `conclusion == 'success'`: CI が赤いまま出すと、release 判断の足場が崩れる
+    # - `event == 'push'`: PR の CI では出さない
+    # - `head_repository == このリポジトリ`: **fork からの PR を締め出す。**
+    #   `branches: [main]` が見ているのは発火元の head_branch なので、fork の
+    #   `main` から PR を出すとすり抜ける。その状態でここが動くと、他人のコードを
+    #   `VERCEL_TOKEN` を持ったまま実行することになる
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Vercel へ出す（Preview = staging）
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          # 版を固定する。トークンを持った状態で、知らないうちに新しい CLI が
+          # 走るのは避ける。上げるときは意識して上げる。
+          VERCEL_CLI_VERSION: "48.2.11"
+          STAGING_DOMAIN: ${{ vars.STAGING_DOMAIN }}
+        run: |
+          npx --yes vercel@$VERCEL_CLI_VERSION pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          npx --yes vercel@$VERCEL_CLI_VERSION build --token "$VERCEL_TOKEN"
+          url=$(npx --yes vercel@$VERCEL_CLI_VERSION deploy --prebuilt --token "$VERCEL_TOKEN")
+          echo "staging: $url"
+          echo "staging: $url" >> "$GITHUB_STEP_SUMMARY"
+          # 固定のドメインを割り当てている場合は、ここで付け替える。
+          if [ -n "$STAGING_DOMAIN" ]; then
+            npx --yes vercel@$VERCEL_CLI_VERSION alias set "$url" "$STAGING_DOMAIN" \
+              --token "$VERCEL_TOKEN"
+          fi
+
+      - name: 出たものが応答するか
+        env:
+          STAGING_URL: ${{ vars.STAGING_DOMAIN }}
+        run: |
+          if [ -z "$STAGING_URL" ]; then
+            echo "STAGING_DOMAIN が未設定。確認は省略する。"
+            exit 0
+          fi
+          for i in $(seq 1 20); do
+            curl -sf "https://$STAGING_URL/api/health" && exit 0
+            sleep 5
+          done
+          echo "staging が応答しない"; exit 1
+
+  smoke:
+    # **CI では原理的に確かめられないもの**だけを、出したあとの staging で見る。
+    #
+    # - 環境変数の設定漏れ・取り違え（Vercel 側の設定なので CI からは見えない）
+    # - PostgreSQL 固有の問題（CI は SQLite）
+    # - サーバーレスの挙動（コールドスタート、複数インスタンスの同時起動）
+    # - Vercel のルーティングと静的ファイルの配信
+    # - **DB の移行漏れ**。起動は成功して最初の問い合わせで落ちるので、
+    #   実際に読み書きする経路を通さないと分からない
+    #
+    # フルのブラウザテストは当てない。staging のデータが汚れ、人が触っている
+    # 最中とぶつかるため。
+    name: staging を叩いて確かめる
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+    env:
+      STAGING_URL: ${{ vars.STAGING_DOMAIN }}
+      STAGING_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+      NAME: ci-smoke-${{ github.run_id }}
+    steps:
+      - name: 設定が揃っているか
+        id: ready
+        run: |
+          if [ -z "$STAGING_URL" ] || [ -z "$STAGING_PASSWORD" ]; then
+            # 黙って緑にしない。「出しただけで何も確かめていない」状態が
+            # 全緑に見えると、設定漏れにいつまでも気づけない。
+            {
+              echo "### staging の確認を省略した"
+              echo ""
+              echo "\`STAGING_DOMAIN\`（Variables）か \`STAGING_ADMIN_PASSWORD\`"
+              echo "（Secrets）が未設定です。DEPLOY_SETUP.md の手順5を見てください。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::staging の確認を省略した（STAGING_DOMAIN / STAGING_ADMIN_PASSWORD が未設定）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 合言葉の門と静的ファイル
+        if: steps.ready.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          base="https://$STAGING_URL"
+
+          test "$(curl -s "$base/api/health")" = '{"status":"ok"}'
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$base/api/sessions")
+          test "$code" = "401" || { echo "合言葉なしで練習会が見える ($code)"; exit 1; }
+
+          # メンバー用画面は合言葉なしで開ける（QR を読んだ人のため）。
+          curl -sf "$base/member.html" > /dev/null
+          curl -sf "$base/api.js" > /dev/null
+          echo "門と静的ファイル OK"
+
+      - name: DB を読み書きできるか
+        if: steps.ready.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          base="https://$STAGING_URL"
+
+          # 合言葉に " や \ が入っていても壊れないよう、JSON は jq に組ませる。
+          jq -n --arg p "$STAGING_PASSWORD" '{password: $p}' > login.json
+          curl -sf -c cookie.txt -X POST -H 'Content-Type: application/json' \
+            -d @login.json "$base/api/login" > /dev/null
+          rm -f login.json
+
+          # ここで 200 が返れば、環境変数が正しく、DB が読めている。
+          curl -sf -b cookie.txt "$base/api/sessions" | jq -e 'type == "array"' > /dev/null
+
+          # 書き込みまで通す。**移行を流し忘れていると、ここで落ちる。**
+          #
+          # 作った時点で必ず token を控える。パイプの途中で落ちると
+          # 片付け先が分からなくなり、staging に ci-smoke-… が残る。
+          jq -n --arg n "$NAME" '{name: $n, court_count: 2}' > session.json
+          curl -sf -b cookie.txt -X POST -H 'Content-Type: application/json' \
+            -d @session.json "$base/api/sessions" > created.json
+          rm -f session.json
+          token=$(jq -er .token < created.json)
+          echo "token=$token" >> "$GITHUB_ENV"
+
+          curl -sf -b cookie.txt "$base/api/sessions" \
+            | jq -e --arg n "$NAME" 'map(.name) | index($n) != null' > /dev/null
+          curl -sf "$base/api/sessions/$token/current" | jq -e '.courts | length == 2' > /dev/null
+          echo "DB の読み書き OK"
+
+      - name: 片付ける
+        # 失敗しても必ず消す。staging に ci-smoke-… が溜まると邪魔になる。
+        if: always() && steps.ready.outputs.skip != 'true'
+        run: |
+          set -uo pipefail
+          # 作る前に落ちていれば token は無い。それ以外は必ず消しにいく。
+          if [ -z "${token:-}" ]; then
+            # 名前から引き直す。作成には成功したが token を控える前に
+            # 落ちた場合を拾う。
+            token=$(curl -s -b cookie.txt "https://$STAGING_URL/api/sessions" \
+              | jq -r --arg n "$NAME" '.[] | select(.name == $n) | .token' | head -1)
+          fi
+          if [ -z "${token:-}" ]; then
+            echo "片付けるものは無い"
+            exit 0
+          fi
+          code=$(curl -s -b cookie.txt -X DELETE \
+            "https://$STAGING_URL/api/sessions/$token" -o /dev/null -w '%{http_code}')
+          echo "片付け: $code"
+          # **消せなかったら赤にする。** 黙って残すと、次に人が使うときに
+          # 見慣れない練習会が並ぶ。
+          case "$code" in
+            204|404) ;;
+            *) echo "::error::$NAME を消せなかった。staging から手で消すこと"; exit 1 ;;
+          esac

@@ -63,6 +63,7 @@ def _session_out(session: PracticeSession) -> SessionOut:
         name=session.name,
         created_at=session.created_at,
         highlight_beginners=session.highlight_beginners,
+        tennisbear_event_id=session.tennisbear_event_id,
         courts=[CourtOut.model_validate(c) for c in session.courts],
     )
 
@@ -175,7 +176,9 @@ def import_members(
         timeout=settings.tennisbear_timeout,
     )
     participants = tennisbear.parse_event_page(html)
-    result = sessions_service.import_participants(db, session, participants)
+    result = sessions_service.import_participants(
+        db, session, participants, event_id=payload.event_id
+    )
     return ImportResultOut(
         added=result.added,
         renamed=result.renamed,

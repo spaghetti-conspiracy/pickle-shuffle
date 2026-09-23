@@ -425,7 +425,10 @@ def unique_nickname(base: str, taken: set[str]) -> str:
 
 
 def import_participants(
-    db: Session, session: PracticeSession, participants: list[Participant]
+    db: Session,
+    session: PracticeSession,
+    participants: list[Participant],
+    event_id: int | None = None,
 ) -> ImportResult:
     """イベントの参加者を練習会に取り込む。
 
@@ -439,7 +442,19 @@ def import_participants(
 
     新しく入れる人の属性は、過去の練習会で覚えた値（`member_profiles`）が
     あればそちらを使う。無ければ tennisbear から推定した値を使う。
+
+    **練習会に紐づくイベントは1つに縛る。** 別のイベントを取り込むと、
+    その一覧に居ない人が一斉に休憩へ回る。イベントIDを打ち間違えたときに
+    黙って起きると事故になる。
     """
+    if event_id is not None:
+        if session.tennisbear_event_id is None:
+            session.tennisbear_event_id = event_id
+        elif session.tennisbear_event_id != event_id:
+            raise ValidationError(
+                f"この練習会はイベント {session.tennisbear_event_id} から取り込んでいます。"
+                "別のイベントは取り込めません。"
+            )
     existing = list(
         db.scalars(select(Member).where(Member.session_id == session.id))
     )

@@ -460,3 +460,36 @@ def test_a_non_numeric_event_id_is_refused(client):
         f"/api/sessions/{token}/members/import", json={"event_id": "abc"}
     )
     assert response.status_code == 422
+
+
+def test_a_session_is_bound_to_one_event(db):
+    """練習会に紐づくイベントは1つ。別のイベントは取り込ませない。
+
+    別のイベントを入れると、その一覧に居ない人が一斉に休憩へ回る。
+    イベントIDを打ち間違えたときに黙って起きると事故になる。
+    """
+    session = _session(db)
+    sessions_service.import_participants(
+        db, session, [_participant(1, "だれか")], event_id=111
+    )
+    assert session.tennisbear_event_id == 111
+
+    with pytest.raises(ValidationError):
+        sessions_service.import_participants(
+            db, session, [_participant(2, "ほかの人")], event_id=222
+        )
+    db.rollback()
+    assert len(sessions_service.list_members(db, session.id)) == 1
+
+
+def test_the_same_event_can_be_imported_again(db):
+    """同じイベントなら何度でも取り込める。直前に増えた人を足すのに使う。"""
+    session = _session(db)
+    sessions_service.import_participants(
+        db, session, [_participant(1, "先の人")], event_id=111
+    )
+    result = sessions_service.import_participants(
+        db, session, [_participant(1, "先の人"), _participant(2, "あとの人")], event_id=111
+    )
+    assert result.added == ["あとの人"]
+    assert result.resting == []

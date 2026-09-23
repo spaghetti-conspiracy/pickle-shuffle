@@ -20,6 +20,7 @@ let poller = null;
 /** コートに試合が入っていないときの説明。状態ごとに理由が違う。 */
 const EMPTY_COURT_MESSAGE = {
   waiting: "「マッチを作る」を押すと組み合わせが出ます",
+  next_round: "次のマッチから使います",
   idle: "人数が足りません",
   practice: "練習コート",
 };
@@ -96,7 +97,7 @@ function render(data) {
     warnings.push(`同名 ${data.duplicate_nicknames.join(" ")}`);
   }
   if (data.stale_members.length) {
-    warnings.push(`メンバー変更あり ${data.stale_members.join(" ")}`);
+    warnings.push(`変更あり（次のマッチから反映） ${data.stale_members.join(" ")}`);
   }
   $("warnings").textContent = warnings.join("　");
 
@@ -116,8 +117,8 @@ async function poll() {
   if (busy) return;
   try {
     const data = await api.get(`/api/sessions/${sessionToken}/current`);
-    // ラウンドとコートの状態が変わったときだけ描き直す。
-    // メンバーを編集しただけでは revision が変わらないので、試合中に画面は動かない。
+    // 描き直すべきときだけ描き直す。revision にはマッチの中身を左右する値が
+    // 入っていないので、メンバーを編集しても試合中の組み合わせは動かない。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
       render(data);

@@ -36,7 +36,7 @@ function fillTimerOptions() {
 
 async function loadSession() {
   const session = await api.get(`/api/sessions/${sessionToken}`);
-  document.title = `${session.name} — 練習会の管理`;
+  document.title = `${session.name} — 練習会の管理 — Pickle Shuffle`;
   $("session-name").textContent = session.name;
   $("highlight-beginners").checked = session.highlight_beginners;
   // 一度取り込んだら、その練習会はそのイベントに紐づく。打ち間違えると

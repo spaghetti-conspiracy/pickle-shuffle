@@ -167,7 +167,7 @@ function render(data) {
   // 内部にレベルの情報があることが全員に分かってしまう。
   // アルゴリズムの確認に使う表示なので、リーダーの全体表示画面だけでよい。
   const highlightBeginners = false;
-  document.title = `${data.session.name} — コート表示`;
+  document.title = `${data.session.name} — コート表示 — Pickle Shuffle`;
   $("session-name").textContent = data.session.name;
   $("status").textContent = data.round_status === "adopted" ? "試合中" : "次のマッチ";
 

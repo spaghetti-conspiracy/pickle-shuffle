@@ -38,6 +38,17 @@ class Settings:
     tennisbear_timeout: float = 10.0
     """取り込みの待ち時間。待たせすぎるより、やり直してもらう方がよい。"""
 
+    skip_db_init: bool = IS_SERVERLESS
+    """起動のたびにテーブルと管理者を用意し直さない。
+
+    **サーバーレスでは既定でやらない。** 関数は冷えるたびに起動し直すので、
+    そのたびにテーブルの照合と pbkdf2 20万回をやると1回目が何秒も遅くなる。
+    用意は `python -m app.init_db` で1度だけ行う（DEPLOY_SETUP.md）。
+
+    手元とコンテナでは今までどおり起動時に用意する（そのほうが手数が少ない）。
+    `SKIP_DB_INIT` で明示的に上書きできる。
+    """
+
     admin_password: str = DEFAULT_ADMIN_PASSWORD
     """管理者の固定パスワード。**いたずら防止であって、秘密を守る仕組みではない。**
 
@@ -66,6 +77,14 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, *, default: bool) -> bool:
+    """真偽の環境変数。設定されていなければ既定のまま。"""
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def load_settings() -> Settings:
     """環境変数から設定を読み込む。"""
     return Settings(
@@ -77,6 +96,7 @@ def load_settings() -> Settings:
         ).strip().rstrip("/"),
         tennisbear_timeout=_env_int("TENNISBEAR_TIMEOUT", 10),
         admin_password=os.environ.get("ADMIN_PASSWORD") or DEFAULT_ADMIN_PASSWORD,
+        skip_db_init=_env_bool("SKIP_DB_INIT", default=IS_SERVERLESS),
         fairness_slack=_env_int("FAIRNESS_SLACK", 0),
         lookahead=_env_int("LOOKAHEAD", 1),
         beam=_env_int("BEAM", 16),

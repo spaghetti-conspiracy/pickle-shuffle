@@ -156,15 +156,24 @@ export function forgetSessionToken() {
  *
  * 返り値の ``stop()`` で完全に止められる（練習会が消えたときなど）。
  */
-export function startPolling(run, intervalMs) {
+export function startPolling(run, interval) {
+  // `interval` は数値でも、そのつど決める関数でもよい。
+  // メンバー用画面は「変わりそうなときだけ速く」するために関数を渡す。
+  const nextDelay = () => (typeof interval === "function" ? interval() : interval);
   let timer = null;
 
+  const tick = () => {
+    run();
+    if (timer !== null) timer = setTimeout(tick, nextDelay());
+  };
   const resume = () => {
-    if (timer === null) timer = setInterval(run, intervalMs);
+    if (timer === null) {
+      timer = setTimeout(tick, nextDelay());
+    }
   };
   const pause = () => {
     if (timer !== null) {
-      clearInterval(timer);
+      clearTimeout(timer);
       timer = null;
     }
   };

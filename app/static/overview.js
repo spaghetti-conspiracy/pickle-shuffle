@@ -19,12 +19,25 @@ import {
   startPolling,
 } from "/api.js";
 
+//: ふだんの間隔。リーダーが押した結果が他端末へ伝わるのを待つ画面なので、
+//: 試合中でも短くしておく。
 const POLL_INTERVAL_MS = 2000;
+
+//: **置き忘れ対策。**
+//:
+//: この画面は2秒ごとに聞きにいく。タブレットを画面を点けたまま置き忘れると、
+//: 一晩で4万回を超え、DB も起きっぱなしになって無料枠を食い潰す。
+//: 何も変わらない時間が続いたら、だんだん間隔を伸ばす。
+//: 変化があるか人が触れば、すぐ元に戻す。
+const POLL_IDLE_AFTER_MS = 30 * 60 * 1000;
+const POLL_IDLE_MS = 60000;
 // リーダーが操作する画面。押した結果は応答で即座に反映されるので、
 // このポーリングは他端末の操作に追従するためのもの。
 
 const sessionToken = currentSessionToken();
 let lastRevision = null;
+//: 最後に「何かが変わった／人が触った」時刻。置き忘れの判断に使う。
+let lastChangeAt = performance.now();
 let busy = false;
 let poller = null;
 const gate = createGate();
@@ -284,6 +297,7 @@ async function poll() {
     // 描き直すべきときだけ描き直す。revision は表示すべき中身の指紋。
     if (data.revision !== lastRevision) {
       lastRevision = data.revision;
+      lastChangeAt = performance.now(); // まだ動いている
       render(data);
     }
   } catch (error) {
@@ -296,6 +310,20 @@ async function poll() {
   } finally {
     document.body.dataset.ready = "1";
   }
+}
+
+/** 次に聞きにいくまでの間隔。
+ *
+ * 何も変わらない時間が続いたら伸ばす。置き忘れたタブレットが一晩中
+ * 問い合わせ続けるのを防ぐためで、使っている間は当たらない
+ * （マッチを進めれば変化があり、触れば操作がある）。
+ */
+export function chooseInterval(sinceLastChangeMs) {
+  return sinceLastChangeMs >= POLL_IDLE_AFTER_MS ? POLL_IDLE_MS : POLL_INTERVAL_MS;
+}
+
+function pollInterval() {
+  return chooseInterval(performance.now() - lastChangeAt);
 }
 
 /** 練習会が消えている。古いマッチや QR を残すと、まだ有効に見えてしまう。 */
@@ -408,6 +436,12 @@ function start() {
   qr.addEventListener("load", () => qr.classList.remove("hidden"));
   qr.addEventListener("error", () => qr.classList.add("hidden"));
   qr.src = `/api/sessions/${sessionToken}/member-qr.svg`;
-  poller = startPolling(poll, POLL_INTERVAL_MS);
+  poller = startPolling(poll, pollInterval);
+  // 人が触ったら、また見ている人がいるということ。すぐ元の速さに戻す。
+  for (const event of ["pointerdown", "keydown"]) {
+    document.addEventListener(event, () => {
+      lastChangeAt = performance.now();
+    });
+  }
   setInterval(renderClock, CLOCK_INTERVAL_MS);
 }

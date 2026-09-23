@@ -5,6 +5,23 @@ from __future__ import annotations
 from app.scheduler.domain import Gender, Level
 
 
+def lineup(data: dict) -> list:
+    """コートごとの出場者。マッチの「組み合わせ」だけを取り出す。
+
+    名前やレベルは表示の都合で変わるので含めない。不変則12 が守るのは
+    「誰と誰が同じ試合に入るか」であって、表示のされ方ではない。
+    """
+    return [
+        (
+            court["id"],
+            [p["id"] for p in court["match"]["team_a"]],
+            [p["id"] for p in court["match"]["team_b"]],
+        )
+        for court in data["courts"]
+        if court["match"]
+    ]
+
+
 def create_session(client, name="練習会", court_count=2) -> dict:
     response = client.post(
         "/api/sessions", json={"name": name, "court_count": court_count}
@@ -102,7 +119,12 @@ def test_starting_the_same_round_twice_is_rejected(client):
 
 
 def test_editing_members_does_not_disturb_the_displayed_card(client):
-    """管理画面でメンバーを編集しても、表示中のマッチも revision も変わらない。"""
+    """管理画面でメンバーを編集しても、表示中のマッチの組み合わせは変わらない。
+
+    revision は表示すべき中身の指紋なので、待機者の顔ぶれが変われば変わる
+    （仕様 l.39-40「全体表示画面とメンバー用画面の内容は自動的に同期する」）。
+    不変則12 が禁じているのは組み合わせが動くことなので、そちらを検証する。
+    """
     session = create_session(client)
     members = add_members(client, session["token"], 13)
     before = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
@@ -119,8 +141,8 @@ def test_editing_members_does_not_disturb_the_displayed_card(client):
     assert response.status_code == 200
 
     after = client.get(f"/api/sessions/{session['token']}/current").json()
-    assert after["revision"] == before["revision"]
-    assert after["courts"] == before["courts"]
+    assert lineup(after) == lineup(before), "編集で組み合わせが動いてはいけない"
+    assert after["round_id"] == before["round_id"]
 
     regenerated = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
     assert regenerated["revision"] != before["revision"]
@@ -168,14 +190,6 @@ def test_a_level_change_mid_round_is_flagged(client):
     assert after["stale_members"] == [nickname]
     assert after["revision"] != before["revision"], "注意書きが出たら描き直される"
 
-    def lineup(data):
-        return [
-            (c["id"], [p["id"] for p in c["match"]["team_a"]],
-             [p["id"] for p in c["match"]["team_b"]])
-            for c in data["courts"]
-            if c["match"]
-        ]
-
     # 色分け用にレベルは今の値を返すので、組み合わせだけを比べる。
     assert lineup(after) == lineup(before), "マッチの組み合わせは動かさない"
 
@@ -190,8 +204,8 @@ def test_editing_someone_who_is_not_playing_is_not_flagged(client):
     client.patch(f"/api/members/{waiting}", json={"level": Level.BEGINNER.value})
 
     after = client.get(f"/api/sessions/{session['token']}/current").json()
-    assert after["stale_members"] == []
-    assert after["revision"] == before["revision"]
+    assert after["stale_members"] == [], "出ていない人の編集で注意は出さない"
+    assert lineup(after) == lineup(before), "組み合わせは動かない"
 
 
 # ---------------------------------------------------------------------------

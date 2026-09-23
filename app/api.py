@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Annotated
@@ -231,21 +232,19 @@ def _stale_member_ids(
     return sorted(stale, key=lambda i: members[i].nickname)
 
 
-def _revision(
-    session: PracticeSession, round_: Round | None, stale_ids: list[int]
-) -> str:
-    """ラウンド・コート・表示設定・注意書きで決まる値。
+def _revision_of(payload: CurrentOut) -> str:
+    """表示すべき内容そのものから導く指紋。
 
-    マッチの中身を左右する値は入れない。メンバーを編集しても
-    表示中のマッチは動かない（不変則12）。
-    一方で、食い違いの注意書きは編集した瞬間に出したいので、ここに含める。
-    表示設定（名前の色分け）も試合の中身を変えないので含めてよい。
+    表示画面はこの値が変わったときだけ描き直す。値を手で組み立てると
+    「コート名を入れ忘れて、変えても反映されない」といった取りこぼしが
+    必ず起きるので、応答の中身をまるごと材料にする。
+
+    不変則12（表示中のマッチを動かさない）は、ここではなく生成側で守る。
+    メンバーを編集しても `MatchSlot` は変わらないので、組み合わせは動かない。
+    動くのは名前・色・注意書きといった表示だけで、それは動いてほしい。
     """
-    court_part = ",".join(f"{c.id}{int(c.in_use)}" for c in session.courts)
-    display_part = int(session.highlight_beginners)
-    stale_part = ",".join(str(i) for i in stale_ids)
-    head = "-" if round_ is None else f"{round_.id}:{round_.status.value}"
-    return f"{head}|{court_part}|{display_part}|{stale_part}"
+    body = payload.model_dump_json(exclude={"revision"})
+    return hashlib.blake2b(body.encode("utf-8"), digest_size=8).hexdigest()
 
 
 def _build_current(
@@ -311,18 +310,20 @@ def _build_current(
     stale_ids = _stale_member_ids(members, playing, round_)
     stale = [members[i].nickname for i in stale_ids]
 
-    return CurrentOut(
+    payload = CurrentOut(
         session=_session_out(session),
         round_id=round_.id if round_ else None,
         round_status=round_.status if round_ else None,
-        revision=_revision(session, round_, stale_ids),
+        revision="",
         courts=court_states,
         waiting=waiting,
         resting=resting,
-        stale_members=sorted(stale),
+        stale_members=stale,
         duplicate_nicknames=rounds_duplicate_names(db, round_),
         member_url=member_page_url(request, session.token) if request else "",
     )
+    payload.revision = _revision_of(payload)
+    return payload
 
 
 def rounds_duplicate_names(db: Session, round_: Round | None) -> list[str]:

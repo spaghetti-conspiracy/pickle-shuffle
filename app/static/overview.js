@@ -79,7 +79,7 @@ function renderLegend(highlightBeginners) {
   const items = [
     ["male", "男性"],
     ["female", "女性"],
-    ["other", "その他"],
+    ["other", "未設定"],
   ];
   if (highlightBeginners) items.push(["beginner", "初心者"]);
   const legend = $("legend");

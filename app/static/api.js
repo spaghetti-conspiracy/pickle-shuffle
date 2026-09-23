@@ -30,7 +30,9 @@ export const api = {
 /** 短く書くためだけのもの。4画面すべてで使う。 */
 export const $ = (id) => document.getElementById(id);
 
-export const GENDER_LABELS = { male: "男性", female: "女性", other: "その他" };
+// 取り込みでは性別が分からないことがある。「その他」だと選んだように見えるので
+// 「未設定」にする。値そのもの（other）と生成側の扱いは変えない。
+export const GENDER_LABELS = { male: "男性", female: "女性", other: "未設定" };
 // 管理画面の追加フォーム（manage.html）と同じ文言にしておく。
 // 片方だけ直すと、同じレベルが画面内で別の名前に見えてしまう。
 export const LEVEL_LABELS = {

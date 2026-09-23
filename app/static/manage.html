@@ -41,7 +41,7 @@
       <select id="new-gender">
         <option value="male">男性</option>
         <option value="female">女性</option>
-        <option value="other">その他</option>
+        <option value="other">未設定</option>
       </select>
       <select id="new-level">
         <option value="pickleball">ピックルボール経験者</option>
@@ -50,6 +50,12 @@
       </select>
       <button id="add-member" class="primary">追加</button>
     </div>
+    <div class="row" style="margin-top:0.5rem">
+      <input id="import-event" placeholder="tennisbear のイベントID" size="22"
+             inputmode="numeric">
+      <button id="import-members">参加者を取り込む</button>
+    </div>
+    <p id="import-result" class="notice"></p>
     <p id="member-error" class="error"></p>
     <div class="table-scroll">
       <table>

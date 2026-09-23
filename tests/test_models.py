@@ -42,6 +42,7 @@ def _make_session(db, name: str = "練習会", court_count: int = 2) -> Practice
 def test_practice_session_defaults(db):
     s = _make_session(db)
     assert s.random_seed > 0
+    assert len(s.token) == 10
     assert [c.name for c in s.courts] == ["コート1", "コート2"]
     assert all(c.in_use for c in s.courts), "作成直後はすべて試合に使う"
 
@@ -81,6 +82,20 @@ def test_each_session_gets_its_own_seed(db):
     a = _make_session(db, "午前")
     b = _make_session(db, "午後")
     assert a.random_seed != b.random_seed
+
+
+def test_each_session_gets_its_own_token(db):
+    """URL に出す識別子。連番だと他の練習会を推測できてしまう。"""
+    tokens = {_make_session(db, f"会{i}").token for i in range(10)}
+    assert len(tokens) == 10
+
+
+def test_tokens_avoid_confusable_characters(db):
+    """読み上げや手入力で取り違えないよう 0/O・1/l/I を使わない。"""
+    from app.models import TOKEN_ALPHABET
+
+    assert not set("01lIoO") & set(TOKEN_ALPHABET)
+    assert not set("01lIoO") & set(_make_session(db).token)
 
 
 def test_enum_columns_round_trip_as_enum(db):

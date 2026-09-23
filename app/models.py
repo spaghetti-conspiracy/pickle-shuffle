@@ -54,6 +54,22 @@ def new_random_seed() -> int:
     return secrets.randbits(63)
 
 
+#: トークンに使う文字。読み上げや手入力で取り違えないよう
+#: 0/O、1/l/I は入れない。31種類。
+TOKEN_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+TOKEN_LENGTH = 10
+
+
+def new_session_token() -> str:
+    """URL に出す練習会の識別子。
+
+    連番だと、メンバーが自分の練習会の URL から他の練習会を推測できてしまう。
+    認証は付けない方針なので、推測できない値にすることで守る。
+    31種から10文字なので総数は 31^10 ≈ 8.2 x 10^14。総当たりでは当たらない。
+    """
+    return "".join(secrets.choice(TOKEN_ALPHABET) for _ in range(TOKEN_LENGTH))
+
+
 def default_court_name(court_index: int) -> str:
     """コート名の初期値。"""
     return f"コート{court_index + 1}"
@@ -65,6 +81,11 @@ class PracticeSession(Base):
     __tablename__ = "practice_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(
+        String(TOKEN_LENGTH), unique=True, index=True, default=new_session_token
+    )
+    """URL と API で使う識別子。連番の id は外に出さない。"""
+
     name: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     random_seed: Mapped[int] = mapped_column(BigInteger, default=new_random_seed)

@@ -65,6 +65,10 @@ def level_from_tennisbear(tennis_level: int, pickleball_level: int) -> Level:
     この違いは仕様3a/3b の避け方を変えるので、混ぜてはいけない。
 
     推定なので外れる。管理画面で直せることが前提。
+
+    外れ方の実例: テニスを「初中級」で登録しているが、実際にはラケット
+    スポーツ未経験、という人がいた。登録値が本人の実態と違うので、
+    ここから見分ける方法は無い。取り込みは下書きにすぎない。
     """
     if pickleball_level > _PICKLEBALL_NOVICE:
         return Level.PICKLEBALL

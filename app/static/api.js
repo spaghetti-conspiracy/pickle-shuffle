@@ -26,9 +26,11 @@ export const api = {
 };
 
 export const GENDER_LABELS = { male: "男性", female: "女性", other: "その他" };
+// 管理画面の追加フォーム（manage.html）と同じ文言にしておく。
+// 片方だけ直すと、同じレベルが画面内で別の名前に見えてしまう。
 export const LEVEL_LABELS = {
   pickleball: "ピックルボール経験者",
-  racket_experienced: "ラケット経験者",
+  racket_experienced: "ラケット経験者（ルール習得中）",
   beginner: "未経験者",
 };
 

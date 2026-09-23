@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Annotated
 
@@ -191,15 +192,49 @@ def _player_out(member: Member) -> PlayerOut:
     )
 
 
-def _revision(round_: Round | None, courts: list[Court]) -> str:
-    """ラウンドとコートの状態だけで決まる値。
+def _as_utc(value: datetime) -> datetime:
+    """naive な日時を UTC とみなして揃える。
 
-    メンバーを編集しただけでは変わらないので、試合中に表示が勝手に動かない。
+    保存はどちらも UTC だが、SQLite は tz を落として返すため、
+    そのまま比べると PostgreSQL 側の aware な値と比較できない。
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _stale_member_ids(
+    members: dict[int, Member], playing: set[int], round_: Round | None
+) -> list[int]:
+    """表示中のマッチと食い違っているメンバー。
+
+    休憩・離脱に加えて、生成より後に属性（レベルなど）を変えた人も含める。
+    表示中のマッチ自体は動かさない方針（不変則12）なので、
+    食い違いは画面の注意書きで伝えるしかない。
+    """
+    if round_ is None:
+        return []
+    generated_at = _as_utc(round_.created_at)
+    stale = []
+    for member_id in playing:
+        member = members.get(member_id)
+        if member is None:
+            continue
+        changed_after = _as_utc(member.updated_at) > generated_at
+        if member.status is not MemberStatus.ACTIVE or changed_after:
+            stale.append(member_id)
+    return sorted(stale, key=lambda i: members[i].nickname)
+
+
+def _revision(round_: Round | None, courts: list[Court], stale_ids: list[int]) -> str:
+    """ラウンド・コートの状態と、注意書きで決まる値。
+
+    マッチの中身を左右する値は入れない。メンバーを編集しても
+    表示中のマッチは動かない（不変則12）。
+    一方で、食い違いの注意書きは編集した瞬間に出したいので、ここに含める。
     """
     court_part = ",".join(f"{c.id}{int(c.in_use)}" for c in courts)
-    if round_ is None:
-        return f"-|{court_part}"
-    return f"{round_.id}:{round_.status.value}|{court_part}"
+    stale_part = ",".join(str(i) for i in stale_ids)
+    head = "-" if round_ is None else f"{round_.id}:{round_.status.value}"
+    return f"{head}|{court_part}|{stale_part}"
 
 
 def _build_current(
@@ -251,21 +286,18 @@ def _build_current(
     resting = [
         _player_out(m) for m in members.values() if m.status is MemberStatus.RESTING
     ]
-    stale = [
-        m.nickname
-        for m in members.values()
-        if m.id in playing and m.status is not MemberStatus.ACTIVE
-    ]
+    stale_ids = _stale_member_ids(members, playing, round_)
+    stale = [members[i].nickname for i in stale_ids]
 
     return CurrentOut(
         session=_session_out(session),
         round_id=round_.id if round_ else None,
         round_status=round_.status if round_ else None,
-        revision=_revision(round_, session.courts),
+        revision=_revision(round_, session.courts, stale_ids),
         courts=court_states,
         waiting=waiting,
         resting=resting,
-        stale_members=sorted(stale),
+        stale_members=stale,
         duplicate_nicknames=rounds_duplicate_names(db, round_),
         member_url=member_page_url(request, session.token) if request else "",
     )

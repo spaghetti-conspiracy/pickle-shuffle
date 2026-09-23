@@ -212,3 +212,100 @@ def test_not_enough_players_for_even_one_court(db):
     session = make_session(db, count=3)
     with pytest.raises(NotEnoughPlayersError):
         rounds_service.generate(db, session)
+
+
+def _beginner_session(db, beginners: int = 1, count: int = 8):
+    """全員ピックルボール経験者のうち、先頭の何人かを初心者にした練習会。"""
+    session = sessions_service.create_session(db, "レベル変更", 2)
+    members = [
+        sessions_service.add_member(
+            db,
+            session,
+            nickname=f"m{i + 1}",
+            gender=Gender.MALE if i % 2 == 0 else Gender.FEMALE,
+            level=Level.BEGINNER if i < beginners else Level.PICKLEBALL,
+        )
+        for i in range(count)
+    ]
+    db.refresh(session)
+    return session, members
+
+
+def _partner_of(round_, member_id: int) -> int:
+    """その人と同じチームに入ったもう一人。"""
+    for match in round_.matches:
+        for team_index in (0, 1):
+            team = [s.member_id for s in match.slots if s.team_index == team_index]
+            if member_id in team:
+                return next(x for x in team if x != member_id)
+    raise AssertionError("出場していない")
+
+
+def test_promoting_a_beginner_keeps_the_past_burden(db):
+    """初心者を経験者に変えても、過去に受け持った回数は消えない。
+
+    消えると、すでに何度も受け持った人が「まだ受け持っていない」ことになり、
+    残りの初心者をまた割り当てられる。当時のレベルで固定する必要がある。
+    """
+    session, members = _beginner_session(db, beginners=1)
+    beginner = members[0]
+
+    round_ = rounds_service.generate(db, session)
+    rounds_service.adopt(db, round_)
+    partner = _partner_of(round_, beginner.id)
+    assert stats_service.build_history(db, session.id).beginner_partner_count[partner] == 1
+
+    sessions_service.update_member(db, beginner, level=Level.PICKLEBALL)
+
+    after = stats_service.build_history(db, session.id).beginner_partner_count
+    assert after[partner] == 1, "昇格させても、当時受け持った事実は残る"
+
+
+def test_demoting_a_player_does_not_backdate_the_burden(db):
+    """経験者を初心者に変えても、過去に遡って負担が計上されない。
+
+    計上されると、実際には受け持っていない人が以後は免除されてしまう。
+    """
+    session, members = _beginner_session(db, beginners=0)
+
+    round_ = rounds_service.generate(db, session)
+    rounds_service.adopt(db, round_)
+    assert stats_service.build_history(db, session.id).beginner_partner_count == {}
+
+    sessions_service.update_member(db, members[0], level=Level.BEGINNER)
+
+    after = stats_service.build_history(db, session.id).beginner_partner_count
+    assert after == {}, "当時は初心者ではないので、誰も受け持っていない"
+
+
+def test_a_level_change_takes_effect_from_the_next_generation(db):
+    """レベルの変更は、次に生成するマッチから効く。"""
+    session, members = _beginner_session(db, beginners=0)
+    rounds_service.adopt(db, rounds_service.generate(db, session))
+
+    for member in members[:2]:
+        sessions_service.update_member(db, member, level=Level.BEGINNER)
+    db.refresh(session)
+
+    round_ = rounds_service.generate(db, session)
+    assert _partner_of(round_, members[0].id) != members[1].id, (
+        "初心者にしたらすぐ、初心者同士のペアが避けられる"
+    )
+
+
+def test_a_level_change_does_not_move_the_displayed_match(db):
+    """表示中のマッチは、レベルを変えても動かない（不変則12）。"""
+    session, members = _beginner_session(db, beginners=0)
+    round_ = rounds_service.generate(db, session)
+    before = [
+        (s.match_id, s.team_index, s.member_id) for m in round_.matches for s in m.slots
+    ]
+
+    for member in members[:2]:
+        sessions_service.update_member(db, member, level=Level.BEGINNER)
+
+    db.refresh(round_)
+    after = [
+        (s.match_id, s.team_index, s.member_id) for m in round_.matches for s in m.slots
+    ]
+    assert after == before

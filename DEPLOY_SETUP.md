@@ -201,8 +201,18 @@ gh variable set STAGING_DOMAIN --body 'pickle-shuffle-staging.vercel.app'
 gh variable set PRODUCTION_DOMAIN --body 'pickle-shuffle.vercel.app'
 ```
 
-`STAGING_DOMAIN` は次の手順で決まるので、先に staging を出してから設定してもよい
-（未設定でも deploy は動き、確認だけが省かれる）。
+**`STAGING_DOMAIN` は自分で決める。** Vercel の Git 連携を止めてあるので、
+`pickle-shuffle-git-main-….vercel.app` のようなブランチ用の固定 URL は作られない。
+デプロイごとの URL（`pickle-shuffle-<英数字>-….vercel.app`）は毎回変わるので、
+**固定の別名を1つ決めて、ワークフローに張り替えさせる**。
+
+```bash
+gh variable set STAGING_DOMAIN --body 'pickle-shuffle-staging.vercel.app'
+```
+
+`*.vercel.app` の空いている名前なら何でもよい。設定すると、以後のデプロイで
+`vercel alias set` が走り、その名前でいつでも staging を開けるようになる
+（未設定でも deploy 自体は動き、確認だけが省かれる）。
 
 ## 6. main を守る
 

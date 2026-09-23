@@ -57,9 +57,15 @@ jobs:
           # `.vercelignore` で除外したファイルを読もうとして落ちる
           # （`ENOENT: readlink '/vercel/path0/doc/...'`）。Vercel 側に
           # ビルドさせる方が経路が1つで、実際に動くことを確認している。
-          npx --yes vercel@$VERCEL_CLI_VERSION deploy --token "$VERCEL_TOKEN" > deploy.json
-          # CLI は JSON を返す。`.deployment.url` に URL が入る。
-          url=$(jq -er '.deployment.url' < deploy.json)
+          npx --yes vercel@$VERCEL_CLI_VERSION deploy --token "$VERCEL_TOKEN" > deploy.out
+          # **出力の形は環境で変わる。** CI では URL が1行、手元では JSON が返る
+          # （`CI=true` で切り替わる）。どちらでも取れるようにする。
+          url=$(jq -er '.deployment.url' < deploy.out 2>/dev/null || true)
+          [ -n "$url" ] || url=$(grep -oE 'https://[A-Za-z0-9.-]+\.vercel\.app' deploy.out | tail -1)
+          case "$url" in
+            https://*) ;;
+            *) echo "::error::デプロイ先の URL を取れなかった"; cat deploy.out; exit 1 ;;
+          esac
           echo "staging: $url"
           echo "staging: $url" >> "$GITHUB_STEP_SUMMARY"
           # 固定のドメインを割り当てている場合は、ここで付け替える。

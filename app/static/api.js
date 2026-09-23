@@ -32,6 +32,73 @@ export const api = {
   del: (path) => request("DELETE", path),
 };
 
+/** 合言葉が切れていたらトップ画面に戻す。
+ *
+ * 管理画面と全体表示画面は、トップ画面で合言葉を入れてから開くもの。
+ * ここで入力欄を出すと、練習会ごとに合言葉を配ることになってしまう。
+ * **メンバー用画面では使わない。** QR を読んだ人に合言葉は要らない。
+ */
+export function bounceToTop(error) {
+  if (error?.status !== 401) return false;
+  location.replace("/");
+  return true;
+}
+
+/** 合言葉の入力欄。
+ *
+ * **いたずら防止であって、秘密を守る仕組みではない。** 練習会のトークンで
+ * 開く画面（管理・全体表示・メンバー用）には掛からないので、QR を読んだ人に
+ * 合言葉を配る必要はない。掛かるのは選択画面とメンバー管理画面だけ。
+ *
+ * `load` が 401 を投げたら入力欄を出し、通ったら本体を出す。
+ */
+export function createPasswordGate({ load }) {
+  const gate = document.getElementById("gate");
+  const main = document.getElementById("main");
+  const error = document.getElementById("gate-error");
+
+  function show(which) {
+    gate.classList.toggle("hidden", which !== "gate");
+    main.classList.toggle("hidden", which !== "main");
+    // 合言葉を聞いている状態も「描き終わった」に含める。そうしないと、
+    // 読み込み中と区別が付かない。
+    document.body.dataset.ready = "1";
+    if (which === "gate") document.getElementById("password").focus();
+  }
+
+  async function enter() {
+    try {
+      await load();
+      show("main");
+      return true;
+    } catch (failure) {
+      if (failure.status !== 401) throw failure;
+      show("gate");
+      return false;
+    }
+  }
+
+  document.getElementById("unlock").addEventListener("click", async () => {
+    error.textContent = "";
+    try {
+      await request("POST", "/api/login", {
+        password: document.getElementById("password").value,
+      });
+    } catch (failure) {
+      error.textContent = failure.message;
+      return;
+    }
+    document.getElementById("password").value = "";
+    await enter();
+  });
+
+  document.getElementById("password").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") document.getElementById("unlock").click();
+  });
+
+  return { enter };
+}
+
 /** 短く書くためだけのもの。4画面すべてで使う。 */
 export const $ = (id) => document.getElementById(id);
 

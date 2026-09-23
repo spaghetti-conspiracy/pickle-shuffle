@@ -9,7 +9,7 @@ from app.scheduler.domain import Weights
 
 DEFAULT_DATABASE_URL = "sqlite:///./data/app.db"
 DEFAULT_TENNISBEAR_URL = "https://www.tennisbear.net"
-DEFAULT_ADMIN_PASSWORD = "pickle"
+DEFAULT_ADMIN_PASSWORD = "thrivepickle"
 
 IS_SERVERLESS = bool(os.environ.get("VERCEL"))
 """Vercel などのサーバーレス環境で動いているか。

@@ -42,8 +42,16 @@
   <section id="members-section">
     <h2>メンバー</h2>
     <div class="row">
-      <input id="new-nickname" list="known-nicknames" placeholder="ニックネーム" size="14">
-      <datalist id="known-nicknames"></datalist>
+      <select id="pick-person" aria-label="名簿から選ぶ"></select>
+      <button id="add-known" class="primary">参加者にする</button>
+    </div>
+    <p id="pick-note" class="notice"></p>
+    <p class="notice">
+      名簿にいない人は、下の欄で登録できます（名簿にも入ります）。
+      名簿の手入れは <a href="/members.html">メンバーの管理</a> から。
+    </p>
+    <div class="row" style="margin-top:0.5rem">
+      <input id="new-nickname" placeholder="ニックネーム" size="14">
       <select id="new-gender">
         <option value="male">男性</option>
         <option value="female">女性</option>

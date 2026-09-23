@@ -7,6 +7,7 @@
 import {
   $,
   api,
+  bounceToTop,
   currentSessionToken,
   forgetSessionToken,
   GENDER_LABELS,
@@ -15,8 +16,9 @@ import {
 } from "/api.js";
 
 const sessionToken = currentSessionToken();
-let profiles = [];
-/** いまの練習会に登録済みのニックネーム。入力候補から外すために持っておく。 */
+/** メンバー名簿。参加者はここから選んで足す。 */
+let people = [];
+/** いまの練習会に入っている人の id。名簿の選択肢から外すために持っておく。 */
 let registered = new Set();
 
 function showError(message) {
@@ -109,33 +111,32 @@ async function loadCourts() {
   }
 }
 
-async function loadProfiles() {
-  profiles = await api.get("/api/member-profiles");
-  renderProfileOptions();
+async function loadPeople() {
+  people = await api.get("/api/people");
+  renderPeopleOptions();
 }
 
-/** 入力候補を描き直す。すでに登録済みの人は出さない（選んでも二重登録になるだけ）。
+/** 名簿の選択肢を描き直す。すでに参加している人は出さない（二重登録になるだけ）。
  *
- * メンバー一覧と候補はどちらが先に読み終わるか決まらないので、
+ * メンバー一覧と名簿はどちらが先に読み終わるか決まらないので、
  * 両方の更新からここを呼んで、そのときに分かっている情報で組み立てる。 */
-function renderProfileOptions() {
-  const list = $("known-nicknames");
-  list.innerHTML = "";
-  for (const profile of profiles) {
-    if (registered.has(profile.nickname)) continue;
+function renderPeopleOptions() {
+  const select = $("pick-person");
+  const chosen = select.value;
+  select.innerHTML = "";
+  const available = people.filter((person) => !registered.has(person.id));
+  for (const person of available) {
     const option = document.createElement("option");
-    option.value = profile.nickname;
-    list.append(option);
+    option.value = String(person.id);
+    option.textContent = person.nickname;
+    select.append(option);
   }
-}
-
-/** 既に登録のある名前を入力したら、性別とレベルを埋める。 */
-function autofillFromProfile() {
-  const nickname = $("new-nickname").value.trim();
-  const profile = profiles.find((p) => p.nickname === nickname);
-  if (!profile) return;
-  $("new-gender").value = profile.gender;
-  $("new-level").value = profile.level;
+  if (available.some((person) => String(person.id) === chosen)) select.value = chosen;
+  // 選べる人がいなければ押せないようにする（全員参加済みか、名簿が読めない）。
+  $("pick-person").disabled = available.length === 0;
+  $("add-known").disabled = available.length === 0;
+  $("pick-note").textContent =
+    available.length === 0 ? "名簿の全員がこの練習会に入っています。" : "";
 }
 
 /** レベルを変える。練習会の最中に上げ下げする運用が前提にある。 */
@@ -188,8 +189,8 @@ function statusButton(member) {
 
 async function loadMembers() {
   const members = await api.get(`/api/sessions/${sessionToken}/members`);
-  registered = new Set(members.map((m) => m.nickname));
-  renderProfileOptions();
+  registered = new Set(members.map((m) => m.person_id).filter((id) => id !== null));
+  renderPeopleOptions();
   const counts = {};
   for (const member of members) counts[member.nickname] = (counts[member.nickname] ?? 0) + 1;
 
@@ -226,9 +227,13 @@ async function loadMembers() {
     const actions = document.createElement("td");
     if (member.status !== "left") {
       const remove = document.createElement("button");
-      remove.textContent = "削除";
+      remove.textContent = "外す";
       remove.className = "danger";
       remove.addEventListener("click", async () => {
+        // 消えるのはこの練習会の参加者リストからだけ。名簿には残る。
+        if (!window.confirm(`「${member.nickname}」をこの練習会から外します。名簿には残ります。`)) {
+          return;
+        }
         remove.disabled = true;
         try {
           await api.del(`/api/members/${member.id}`);
@@ -263,7 +268,7 @@ async function loadMembers() {
 
 async function refresh() {
   await loadSession();
-  await Promise.all([loadCourts(), loadMembers(), loadProfiles()]);
+  await Promise.all([loadCourts(), loadMembers(), loadPeople()]);
   document.body.dataset.ready = "1";
 }
 
@@ -321,7 +326,7 @@ $("import-members").addEventListener("click", async () => {
     }
     result.textContent = parts.join("　/　");
     showError("");
-    await Promise.all([loadSession(), loadMembers(), loadProfiles()]);
+    await Promise.all([loadSession(), loadMembers(), loadPeople()]);
   } catch (error) {
     result.textContent = "";
     showError(error.message);
@@ -349,8 +354,17 @@ $("finish-session").addEventListener("click", async () => {
   }
 });
 
-$("new-nickname").addEventListener("change", autofillFromProfile);
-$("new-nickname").addEventListener("blur", autofillFromProfile);
+$("add-known").addEventListener("click", async () => {
+  const personId = Number($("pick-person").value);
+  if (!personId) return;
+  try {
+    await api.post(`/api/sessions/${sessionToken}/members`, { person_id: personId });
+    showError("");
+    await Promise.all([loadMembers(), loadPeople()]);
+  } catch (error) {
+    showError(error.message);
+  }
+});
 
 $("add-member").addEventListener("click", async () => {
   const input = $("new-nickname");
@@ -370,7 +384,7 @@ $("add-member").addEventListener("click", async () => {
       level: $("new-level").value,
     });
     showError("");
-    await Promise.all([loadMembers(), loadProfiles()]);
+    await Promise.all([loadMembers(), loadPeople()]);
   } catch (error) {
     showError(`${nickname}: ${error.message}`);
     if (!input.value) input.value = nickname;
@@ -389,6 +403,8 @@ if (!sessionToken) {
       location.replace("/");
       return;
     }
+    // 合言葉が無い／切れた。トップ画面で入れてから開き直してもらう。
+    if (bounceToTop(error)) return;
     // 通信の瞬断で追い出すと、location.replace なので戻ることもできない。
     showError(`読み込めません（${error.message}）。通信を確認して開き直してください。`);
     document.body.dataset.ready = "1";

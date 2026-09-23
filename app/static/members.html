@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>メンバーの管理 — Pickle Shuffle</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="admin">
+  <h1>メンバーの管理</h1>
+
+  <section id="gate" class="hidden">
+    <h2>合言葉</h2>
+    <div class="row">
+      <input id="password" type="password" placeholder="合言葉" size="20"
+             autocomplete="current-password">
+      <button id="unlock" class="primary">開く</button>
+    </div>
+    <p id="gate-error" class="error"></p>
+    <p class="notice">いたずら防止のための合言葉です。</p>
+  </section>
+
+  <section id="main" class="hidden">
+    <h2>メンバー</h2>
+    <div class="row">
+      <input id="new-nickname" placeholder="ニックネーム" size="14">
+      <select id="new-gender">
+        <option value="male">男性</option>
+        <option value="female">女性</option>
+        <option value="other">未設定</option>
+      </select>
+      <select id="new-level">
+        <option value="pickleball">ピックルボール経験者</option>
+        <option value="racket_experienced">ラケット経験者（ルール習得中）</option>
+        <option value="beginner">未経験者</option>
+      </select>
+      <button id="add-person" class="primary">追加</button>
+    </div>
+    <p id="error" class="error"></p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>ニックネーム</th><th>性別</th><th>レベル</th>
+            <th>登録</th><th>参加中</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="people-body"></tbody>
+      </table>
+    </div>
+    <p id="empty" class="notice hidden">まだ誰も登録されていません。</p>
+    <p class="notice">
+      ここは練習会とは関係のない名簿です。ここで直すと、その人が入っている
+      練習会にも反映されます。表示中のマッチは動きません。
+    </p>
+    <p class="notice">
+      <strong>ここでの削除は取り消せません。</strong> 参加中の練習会からは消えないので、
+      外したいときは練習会の管理画面で「外す」を押してください。
+    </p>
+    <p class="notice">
+      tennisbear からの取り込みは、練習会の作成・管理画面から行います。
+    </p>
+    <p class="notice"><a href="/">練習会の選択・新規作成へ</a></p>
+  </section>
+</div>
+<script type="module" src="/members.js"></script>
+</body>
+</html>

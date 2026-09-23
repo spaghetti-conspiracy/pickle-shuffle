@@ -11,6 +11,18 @@
 <div class="admin">
   <h1>Pickle Shuffle / ピックルボール対戦カード作成</h1>
 
+  <section id="gate" class="hidden">
+    <h2>合言葉</h2>
+    <div class="row">
+      <input id="password" type="password" placeholder="合言葉" size="20"
+             autocomplete="current-password">
+      <button id="unlock" class="primary">開く</button>
+    </div>
+    <p id="gate-error" class="error"></p>
+    <p class="notice">いたずら防止のための合言葉です。</p>
+  </section>
+
+  <div id="main" class="hidden">
   <section>
     <h2>練習会の選択・新規作成</h2>
     <div id="pick" class="row">
@@ -36,6 +48,16 @@
     </p>
     <p class="notice">コート数は作成時に決めます。あとから個々のコートを試合用から外せます。</p>
   </section>
+
+  <section>
+    <h2>メンバー</h2>
+    <p><a id="open-members" href="/members.html">メンバーの管理を開く</a></p>
+    <p class="notice">
+      練習会とは別の名簿です。ここで追加・修正・削除をしておくと、
+      練習会にはそこから選んで足せます。
+    </p>
+  </section>
+  </div>
 </div>
 <script type="module" src="/select.js"></script>
 </body>

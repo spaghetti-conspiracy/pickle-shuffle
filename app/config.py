@@ -30,6 +30,12 @@ class Settings:
     スマートフォンから届かない。そういうときにここで上書きする。
     例: ``http://192.168.1.10:8000``
     """
+    tennisbear_base_url: str = "https://www.tennisbear.net"
+    """参加者の取り込み元。差し替えられるようにしておく（テストと、URL 変更に備えて）。"""
+
+    tennisbear_timeout: float = 10.0
+    """取り込みの待ち時間。待たせすぎるより、やり直してもらう方がよい。"""
+
     weights: Weights = field(default_factory=Weights)
     # 公平性の枠をどこまで緩めてよいか（試合数の差の上限）。既定の 0 は厳密公平。
     fairness_slack: int = 0
@@ -57,6 +63,9 @@ def load_settings() -> Settings:
         database_url=os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL,
         port=_env_int("PORT", 8000),
         public_base_url=(os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/"),
+        tennisbear_base_url=(
+            os.environ.get("TENNISBEAR_BASE_URL") or "https://www.tennisbear.net"
+        ).strip().rstrip("/"),
         fairness_slack=_env_int("FAIRNESS_SLACK", 0),
         lookahead=_env_int("LOOKAHEAD", 1),
         beam=_env_int("BEAM", 16),

@@ -550,3 +550,42 @@ def test_generating_without_enough_players(client):
     response = client.post(f"/api/sessions/{session['token']}/rounds/generate")
     assert response.status_code == 409
     assert "4人以上" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 練習会名の重複
+# ---------------------------------------------------------------------------
+
+
+def test_the_same_session_name_is_refused(client):
+    """同じ名前の練習会は作れない。
+
+    選択画面はプルダウンに名前だけを出すので、同名だと見分けられない。
+    """
+    first = create_session(client, "木曜練習会")
+    response = client.post(
+        "/api/sessions", json={"name": "木曜練習会", "court_count": 2}
+    )
+    assert response.status_code == 422
+    assert "すでにあります" in response.json()["detail"]
+
+    # 先にあった方は無事
+    assert client.get(f"/api/sessions/{first['token']}").status_code == 200
+
+
+def test_a_finished_session_frees_its_name(client):
+    """終了させれば同じ名前で作り直せる。来週も同じ呼び名が使える。"""
+    first = create_session(client, "木曜練習会")
+    assert client.delete(f"/api/sessions/{first['token']}").status_code == 204
+    again = client.post("/api/sessions", json={"name": "木曜練習会", "court_count": 2})
+    assert again.status_code == 201
+
+
+def test_renaming_onto_an_existing_name_is_refused(client):
+    create_session(client, "午前")
+    afternoon = create_session(client, "午後")
+    response = client.patch(
+        f"/api/sessions/{afternoon['token']}", json={"name": "午前"}
+    )
+    assert response.status_code == 422
+    assert client.get(f"/api/sessions/{afternoon['token']}").json()["name"] == "午後"

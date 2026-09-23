@@ -41,6 +41,17 @@ class ValidationError(AppError):
     code = "invalid"
 
 
+class UpstreamError(AppError):
+    """外部のページを取得・解析できなかった。
+
+    こちらの入力ミスとは限らないので 502 にする。相手の作りが変われば
+    壊れる類なので、黙って空の結果を返さず必ずここに落とす。
+    """
+
+    status_code = 502
+    code = "upstream"
+
+
 class NotEnoughPlayersError(AppError):
     """出場可能なメンバーが足りず、マッチを組めない。"""
 

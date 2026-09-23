@@ -79,6 +79,12 @@ class PracticeSession(Base):
     """練習会。"""
 
     __tablename__ = "practice_sessions"
+    __table_args__ = (UniqueConstraint("name", name="uq_session_name"),)
+    """名前は重複させない。
+
+    選択画面はプルダウンに名前だけを出すので、同名があると見分けられない。
+    終了した練習会は削除されるため、次の週には同じ名前を使える。
+    """
 
     id: Mapped[int] = mapped_column(primary_key=True)
     token: Mapped[str] = mapped_column(
@@ -157,6 +163,14 @@ class Member(Base):
     status: Mapped[MemberStatus] = mapped_column(
         _enum_column(MemberStatus), default=MemberStatus.ACTIVE
     )
+    tennisbear_user_id: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
+    """取り込み元の tennisbear のユーザ ID。手で登録した人は None。
+
+    再取り込みのときに「もう登録済みか」を照合するために持つ。
+    ニックネームは識別子ではない（不変則14）ので、名前では照合できない。
+    画面には出さない。
+    """
+
     baseline: Mapped[int] = mapped_column(Integer, default=0)
     """途中参加者の下駄。登録時点の active メンバーの最小 adjusted。"""
 
@@ -282,16 +296,27 @@ class RoundParticipation(Base):
 
 
 class MemberProfile(Base):
-    """ニックネームをキーにした属性の辞書。練習会には属さない。
+    """属性の辞書。練習会には属さない。
 
     保持するのは属性だけで、統計は絶対に共有しない（不変則13）。
-    重複時は last-write-wins で振動してよい。
+    引き当ては tennisbear の ID があればそちらを優先し、無ければニックネーム。
+    ニックネームは識別子ではない（不変則14）ので、重複時は last-write-wins で
+    振動してよい、という運用方針は変えない。
     """
 
     __tablename__ = "member_profiles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     nickname: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    tennisbear_user_id: Mapped[int | None] = mapped_column(
+        Integer, unique=True, index=True, default=None
+    )
+    """取り込み元のユーザ ID。手で登録した人は None。
+
+    こちらで引き当てられると、改名しても属性を見失わない。
+    管理者が直したレベルが次の練習会でも使われる。
+    """
+
     gender: Mapped[Gender] = mapped_column(_enum_column(Gender))
     level: Mapped[Level] = mapped_column(_enum_column(Level))
     updated_at: Mapped[datetime] = mapped_column(

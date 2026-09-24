@@ -126,6 +126,12 @@ a {
   color: var(--muted);
 }
 
+.version {
+  font-size: 0.85rem;
+  text-align: center;
+  margin-top: 1.5rem;
+}
+
 /* ---------- 管理画面 ---------- */
 
 .admin {

@@ -645,7 +645,7 @@ def _split_cases():
     return cases
 
 
-@pytest.mark.parametrize("beam_width", [512, 16, 4])
+@pytest.mark.parametrize("beam_width", [512, 16, 4, 1])
 def test_the_fast_split_matches_the_straightforward_one(beam_width):
     """速くした組み分け探索が、素直な実装と完全に同じ結果を返す。
 
@@ -663,8 +663,18 @@ def test_the_fast_split_matches_the_straightforward_one(beam_width):
         actual = split_into_matches(ids, courts, fast_scorer, beam_width=beam_width)
 
         assert actual == expected, label
-        # 4人のペア分けの抽選（乱数を引く順）も変わっていない。
+        # 4人のペア分けの抽選も、乱数を引く順と回数も変わっていない。
         assert fast_scorer._group_cache == reference_scorer._group_cache, label
+        assert fast_scorer._rng.getstate() == reference_scorer._rng.getstate(), label
+
+
+@pytest.mark.parametrize("beam_width", [0, -1])
+def test_the_split_rejects_a_beam_narrower_than_one(beam_width):
+    """刈り込み幅は1以上。0以下を黙って空の結果にしない。"""
+    stats = [player(i) for i in range(1, 9)]
+    scorer = _make_scorer(stats, _make_state(stats))
+    with pytest.raises(ValueError):
+        split_into_matches(tuple(range(1, 9)), 2, scorer, beam_width=beam_width)
 
 
 def test_tie_break_bytes_are_unchanged():

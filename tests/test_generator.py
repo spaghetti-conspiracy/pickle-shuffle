@@ -846,6 +846,33 @@ def test_beginner_pairs_face_each_other():
     assert same_court >= both_playing * 0.9
 
 
+def _one_sided_beginner_rounds(plans: list[RoundPlan], beginner_ids: set[int]) -> list[int]:
+    """初心者が片側だけにいる試合のあったラウンド番号（1始まり）。"""
+    rounds = []
+    for nth, plan in enumerate(plans, 1):
+        for match in plan.matches:
+            sides = sum(bool(beginner_ids & set(team)) for team in (match.team_a, match.team_b))
+            if sides == 1:
+                rounds.append(nth)
+    return rounds
+
+
+@pytest.mark.parametrize("seed", [11, 22])
+def test_one_sided_beginner_matches_are_put_off(seed):
+    """初心者どうしを対面に集められるうちは集め、差のある試合を後回しにする（優先度5）。
+
+    初心者が片側だけの試合は、経験者が手加減する育成試合になる。初心者どうしの
+    カードはいずれ尽きるので、先に使い切って差のある試合を後ろへ回す。
+    初心者が慣れる時間も稼げる。重みが 700 だと早すぎるペア重複と競合して、
+    9ラウンド目から片側だけの試合が出ていた。
+    """
+    members = make_members(10, beginners=2, racket=1, beginners_last=True)
+    beginner_ids = {m.id for m in members if m.level is Level.BEGINNER}
+    sim = Simulator(members, seed=seed, court_count=2)
+    rounds = _one_sided_beginner_rounds(sim.run(12), beginner_ids)
+    assert rounds == [], rounds
+
+
 def test_partnering_a_beginner_is_shared_evenly():
     """初心者と組む回数を非初心者の間で均す（優先度4）。
 

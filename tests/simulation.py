@@ -204,6 +204,9 @@ class Simulator:
 
         for match in plan.matches:
             self._record_match(match.team_a, match.team_b)
+        self.history.last_round_groups = tuple(
+            tuple(sorted(match.member_ids)) for match in plan.matches
+        )
 
         self.adopted_rounds += 1
         self.attempt = 0
@@ -227,6 +230,9 @@ class Simulator:
             for y in team_b:
                 key = pair_key(x, y)
                 opponent[key] = opponent.get(key, 0) + 1
+
+        group = tuple(sorted((*team_a, *team_b)))
+        self.history.group_count[group] = self.history.group_count.get(group, 0) + 1
 
     def run(self, rounds: int) -> list[RoundPlan]:
         """指定ラウンド数ぶん、生成して採用する。"""

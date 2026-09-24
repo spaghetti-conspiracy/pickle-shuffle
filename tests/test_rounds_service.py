@@ -95,6 +95,16 @@ def test_history_keeps_the_foursomes_and_the_latest_round(db):
     for group in _groups_of(first) + _groups_of(second):
         assert history.group_count[group] >= 1
 
+    # 生成しただけ（pending）や不採用のラウンドは、直前のラウンドにも回数にも入らない。
+    third = rounds_service.generate(db, session)
+    pending = stats_service.build_history(db, session.id)
+    assert pending.last_round_groups == history.last_round_groups
+    assert pending.group_count == history.group_count
+    rounds_service.reject(db, third)
+    rejected = stats_service.build_history(db, session.id)
+    assert rejected.last_round_groups == history.last_round_groups
+    assert rejected.group_count == history.group_count
+
     rounds_service.undo(db, second)
     history = stats_service.build_history(db, session.id)
     assert sorted(history.last_round_groups) == sorted(_groups_of(first))

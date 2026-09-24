@@ -111,12 +111,13 @@ def build_history(db: Session, session_id: int) -> History:
 
     teams: dict[int, dict[int, list[int]]] = {}
     round_of: dict[int, int] = {}
-    seq_of: dict[int, int] = {}
+    seq_of: dict[int, int | None] = {}
     for seq, round_id, match_id, team_index, member_id in rows:
         round_of[match_id] = round_id
-        seq_of[match_id] = seq or 0
+        seq_of[match_id] = seq
         teams.setdefault(match_id, {}).setdefault(team_index, []).append(member_id)
-    latest_seq = max(seq_of.values(), default=None)
+    # 採用済みなら seq は必ず振られている。万一欠けた行があっても直前の候補にはしない。
+    latest_seq = max((seq for seq in seq_of.values() if seq is not None), default=None)
     last_round_groups: list[tuple[int, int, int, int]] = []
 
     history = History()
@@ -145,7 +146,7 @@ def build_history(db: Session, session_id: int) -> History:
                 history.opponent_count[key] = history.opponent_count.get(key, 0) + 1
         group = tuple(sorted((*team_a, *team_b)))
         history.group_count[group] = history.group_count.get(group, 0) + 1
-        if seq_of[match_id] == latest_seq:
+        if latest_seq is not None and seq_of[match_id] == latest_seq:
             last_round_groups.append(group)
 
     history.last_round_groups = tuple(last_round_groups)

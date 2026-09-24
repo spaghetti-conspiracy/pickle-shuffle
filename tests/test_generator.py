@@ -23,6 +23,7 @@ from app.scheduler.domain import (
     PlayerStat,
     RoundPlan,
     Weights,
+    pair_key,
 )
 from app.scheduler.generator import (
     PAIRINGS_OF_FOUR,
@@ -320,6 +321,27 @@ def test_a_member_back_from_a_rest_is_picked_first():
         assert returning.id in plan.playing, "休み明けの人を待たせている"
 
 
+def test_the_just_returned_bonus_lasts_one_round_in_the_lookahead_too():
+    """先読みの中でも、休み明けの扱いは出番の有無に関わらず1ラウンドで消える。
+
+    本番の統計（`stats_rules.is_just_returned`）は直近の記録が休憩かどうかだけを
+    見るので、休憩→出番なし の人はもう休み明けではない。先読みがこれとずれると、
+    先読みのラウンドで休み明けの加点が残ったまま比べてしまう。
+    """
+    from app.scheduler.domain import ParticipationState
+    from app.scheduler.stats_rules import derive
+
+    stats = [player(i) for i in range(1, 5)] + [player(5, just_returned=True)]
+    state = _make_state(stats)
+    state.apply([((1, 2), (3, 4))], [p.id for p in stats], frozenset())
+
+    assert 5 not in state.just_returned
+    derived = derive(
+        [ParticipationState.RESTING, ParticipationState.SAT_OUT], MemberStatus.ACTIVE
+    )
+    assert derived.just_returned is False
+
+
 @pytest.mark.parametrize("count", [9, 10, 12, 13, 16])
 def test_consecutive_sit_outs_are_kept_short(count):
     """連続してマッチに入れない回数を最小にする（優先度3）。"""
@@ -375,11 +397,21 @@ def test_no_partner_is_repeated_while_others_remain(seed):
     6回目の出場で同じ相手と組む人も出ていた（15ラウンドで8〜14組）。
     同じ4人・同じ3人を避ける減点と競合するので、0組までは保証しない
     （13シードの実測で、11シードが0組、残りが3〜4組）。
+    閾値 4 は、減点を切ったときの 8〜14組（このシードでは12組）と分かれる位置。
     """
     sim = Simulator(make_members(16), seed=seed, court_count=4)
     sim.run(15)
     repeated = sum(n - 1 for n in sim.partner_counts().values())
     assert repeated <= 4
+
+
+def test_partners_repeat_early_without_the_mechanism():
+    """上のテストが意味を持つことを、対照で確かめる。"""
+    weights = dataclasses.replace(Weights(), premature_repeat=0)
+    sim = Simulator(make_members(16), seed=11, court_count=4, weights=weights)
+    sim.run(15)
+    repeated = sum(n - 1 for n in sim.partner_counts().values())
+    assert repeated > 4, "機構を切っても起きないなら何も見張っていない"
 
 
 @pytest.mark.parametrize("seed", [2, 3])
@@ -396,6 +428,48 @@ def test_partner_repeats_come_only_near_the_end_of_a_cycle(seed):
     partners = _partners_in_order(sim.run(24))
     firsts = [_first_repeat(ps) for ps in partners.values()]
     assert all(first is None or first >= 7 for first in firsts), firsts
+
+
+def _pair_cost_with(stats: list[PlayerStat], partnered: list[tuple[int, int]], a: int, b: int):
+    """``partnered`` の組が1回ずつ組んだ履歴で、``a`` と ``b`` のペアのコスト。"""
+    from app.scheduler.generator import _Scorer, _State
+
+    history = History(partner_count={pair_key(x, y): 1 for x, y in partnered})
+    state = _State.from_history(stats, history)
+    scorer = _Scorer(stats, state, Weights(), rng=random.Random(0))
+    return scorer.pair_cost[pair_key(a, b)]
+
+
+def test_a_repeat_is_premature_while_both_have_someone_new():
+    """2人とも、まだ組んでいない相手が残っているうちの2回目は減点する。"""
+    w = Weights()
+    stats = [player(i) for i in range(1, 5)]
+    repeat = w.partner * (2 * 1 + 1)
+    assert _pair_cost_with(stats, [(1, 2)], 1, 2) == repeat + w.premature_repeat
+
+
+def test_a_repeat_is_not_premature_once_someone_has_met_everyone():
+    """片方がすでに全員と組んでいれば、2回目は避けようがないので減点しない。"""
+    w = Weights()
+    stats = [player(i) for i in range(1, 5)]
+    repeat = w.partner * (2 * 1 + 1)
+    assert _pair_cost_with(stats, [(1, 2), (1, 3), (1, 4)], 1, 2) == repeat
+
+
+def test_rule_unaware_partners_do_not_count_as_someone_new():
+    """ルール未習得どうしの組は「組んでよい相手」に数えない。
+
+    ラケット経験者2の未ペアの相手がラケット経験者3だけなら、2にはもう
+    組める新しい相手がいないので、1との2回目は減点しない。
+    """
+    w = Weights()
+    stats = [
+        player(1),
+        player(2, level=Level.RACKET_EXPERIENCED),
+        player(3, level=Level.RACKET_EXPERIENCED),
+    ]
+    repeat = w.partner * (2 * 1 + 1)
+    assert _pair_cost_with(stats, [(1, 2)], 1, 2) == repeat
 
 
 def _repeated_foursomes(plans: list[RoundPlan]) -> int:

@@ -21,7 +21,7 @@
 - テスト: `uv run pytest`（ブラウザテストは既定で外れている。走らせるときは `uv run pytest -m browser`。
   初めてのときは先に `uv run playwright install chromium`）
 - lint と整形: `uv run ruff check .` / `uv run ruff format .`
-- ロックの確認: `uv lock --check`（`pyproject.toml` を変えたら）
+- ロックの確認: `uv lock --check`（`pyproject.toml` を変えたら。CI でも確かめている）
 - コンテナ: `docker compose up --build`
 
 ## 設計上の不変則
@@ -172,7 +172,8 @@
   練習会を作って消すような書き込みは、ユーザーの指示があるときだけ行う。
 - **バージョンの上げ方**: release の前に、前回のタグからの変更を見て1回上げる。振る舞いが変わる
   変更（機能・評価関数）を含めばマイナー、修正だけならパッチ。上げる PR は頼まれたら Claude が作る。
-  上げる箇所と手順は `DEPLOY.md` の「打つ前に」に従う。
+  上げる箇所と手順は `DEPLOY.md` の「打つ前に」に従う（`pyproject.toml`・`uv.lock`・
+  `app/__init__.py` を揃える。release はタグと `app.__version__` が食い違うと止まる）。
 
 ## コーディング規約
 

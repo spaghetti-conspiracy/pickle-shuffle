@@ -54,6 +54,36 @@ def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 
 
+def test_the_version_is_the_one_in_pyproject(client):
+    """選択画面に出すバージョンは、`pyproject.toml` の version と同じ。
+
+    Vercel の関数では `pyproject.toml` を読めないので `app.__version__` に直接持っている。
+    上げ忘れて食い違わないよう、ここで照合する。
+    """
+    import re
+    from pathlib import Path
+
+    from app import __version__
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    declared = re.search(r'^version = "([^"]+)"$', pyproject.read_text(), re.MULTILINE)
+    assert declared is not None
+    assert __version__ == declared.group(1)
+    assert client.get("/api/version").json() == {"version": __version__}
+
+
+def test_the_version_needs_the_password(guest_client):
+    """バージョンは合言葉の要る側。公開する入口は増やさない。"""
+    assert guest_client.get("/api/version").status_code == 401
+
+
+def test_the_selection_screen_has_a_place_for_the_version(client):
+    """選択画面の一番下に、バージョンを出す欄がある。"""
+    html = client.get("/").text
+    assert 'id="version"' in html
+    assert html.index('id="version"') > html.index('id="main"'), "一番下に置く"
+
+
 @pytest.mark.parametrize(
     ("path", "marker"),
     [

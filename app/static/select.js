@@ -30,6 +30,17 @@ async function loadSessions() {
   // 1つも無いときは、選ぶところを出さずに作成だけ見せる。
   $("pick").classList.toggle("hidden", sessions.length === 0);
   document.body.dataset.ready = "1";
+  showVersion();
+}
+
+async function showVersion() {
+  // おまけの表示なので、読めなくても画面の他の部分は止めない。
+  try {
+    const { version } = await api.get("/api/version");
+    $("version").textContent = `Pickle Shuffle v${version}`;
+  } catch {
+    $("version").textContent = "";
+  }
 }
 
 $("open-session").addEventListener("click", () => {

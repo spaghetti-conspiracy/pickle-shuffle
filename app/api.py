@@ -12,7 +12,7 @@ import segno
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from sqlalchemy.orm import Session
 
-from app import auth, tennisbear
+from app import __version__, auth, tennisbear
 from app.config import IS_SERVERLESS, settings
 from app.db import get_db
 from app.errors import ConflictError, UnauthorizedError, ValidationError
@@ -123,6 +123,16 @@ router = APIRouter(prefix="/api", dependencies=[Depends(_gate)])
 def health() -> dict[str, str]:
     """死活監視用。"""
     return {"status": "ok"}
+
+
+@router.get("/version")
+def version() -> dict[str, str]:
+    """アプリのバージョン。選択画面の一番下に出す。
+
+    合言葉の要る側に置く（公開する入口は増やさない）。health の応答は CI と
+    リリースの点検が完全一致で照合しているので、そこには足さない。
+    """
+    return {"version": __version__}
 
 
 @public_router.post("/login", status_code=204)

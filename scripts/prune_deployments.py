@@ -1,9 +1,18 @@
-"""古いデプロイを消す。
+"""古いデプロイを消す。手で実行する（CI からは呼ばない）。
 
 ``python scripts/prune_deployments.py [--dry-run]``
 
-**残すのは、最新の READY な production と preview を1つずつだけ。**
-それ以外（失敗したもの、古いもの）は消す。
+**残すのは、外向けの URL（エイリアス）が指しているデプロイだけ。**
+`pickle-shuffle.vercel.app`（本番）や `pickle-shuffle-staging.vercel.app`（staging）の
+ように、ドメインが紐づいているものは使われているので残す。それ以外（古いもの、
+失敗したもの）は消す。
+
+「環境ごとに最新の1つ」で選ぶと、ロールバックした直後のように外向けの URL が
+古い方を指しているとき、使われているデプロイを消してしまう。
+
+ビルド中・待機中のデプロイも残す。リリースの途中で、まだエイリアスが付く前の
+ものを消さないため。エイリアスが1つも取れなければ何もしない（取得の失敗で
+全部消えないように）。
 
 Vercel は出したものをすべて残す。費用は増えない（関数は呼ばれたときだけ動く）が、
 放っておくと困る:
@@ -27,8 +36,12 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Iterable
 
 API = "https://api.vercel.com"
+
+IN_PROGRESS = {"QUEUED", "INITIALIZING", "BUILDING"}
+"""まだ終わっていないデプロイの状態。エイリアスが付く前かもしれないので消さない。"""
 
 
 def _call(method: str, path: str, token: str) -> dict:
@@ -43,6 +56,46 @@ def _call(method: str, path: str, token: str) -> dict:
     return json.loads(body) if body else {}
 
 
+def _fetch_all(get: Callable[[str], dict], path: str, key: str) -> list[dict]:
+    """ページ送りをたどって、一覧をすべて取る。1回100件まで。"""
+    items: list[dict] = []
+    until = None
+    while True:
+        page = get(f"{path}&limit=100" + (f"&until={until}" if until else ""))
+        items.extend(page.get(key, []))
+        until = (page.get("pagination") or {}).get("next")
+        if not until:
+            return items
+
+
+def deployment_of(alias: dict) -> str | None:
+    """エイリアスが指しているデプロイの id。"""
+    return alias.get("deploymentId") or (alias.get("deployment") or {}).get("id")
+
+
+def choose(
+    deployments: Iterable[dict], aliases: Iterable[dict]
+) -> tuple[dict[str, list[str]], list[dict]]:
+    """残すデプロイ（id → 残す理由）と、消すデプロイを決める。
+
+    残すのは、外向けの URL が指しているものと、まだ終わっていないもの。
+    """
+    keep: dict[str, list[str]] = {}
+    for alias in aliases:
+        uid = deployment_of(alias)
+        if uid:
+            keep.setdefault(uid, []).append(alias.get("alias", "?"))
+    doomed = []
+    for item in deployments:
+        if item["uid"] in keep:
+            continue
+        if item.get("readyState") in IN_PROGRESS:
+            keep[item["uid"]] = [f"{item['readyState']}（終わっていない）"]
+            continue
+        doomed.append(item)
+    return keep, doomed
+
+
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
     token = os.environ.get("VERCEL_TOKEN")
@@ -53,35 +106,30 @@ def main() -> None:
             "VERCEL_TOKEN / VERCEL_PROJECT_ID / VERCEL_ORG_ID を設定してください"
         )
 
+    def get(path: str) -> dict:
+        return _call("GET", path, token)
+
     scope = f"projectId={project}&teamId={team}"
-    found = _call("GET", f"/v6/deployments?{scope}&limit=100", token)
-    deployments = found.get("deployments", [])
-    # 新しい順に並んでいる前提だが、念のため自分で並べ替える。
-    deployments.sort(key=lambda d: d.get("created", 0), reverse=True)
+    deployments = _fetch_all(get, f"/v6/deployments?{scope}", "deployments")
+    aliases = _fetch_all(get, f"/v4/aliases?{scope}", "aliases")
 
-    keep: dict[str, str] = {}
-    for item in deployments:
-        target = item.get("target") or "preview"
-        if item.get("readyState") == "READY" and target not in keep:
-            keep[target] = item["uid"]
-
-    if not keep:
-        print("READY なデプロイが1つも無い。何もしない。")
+    if not aliases:
+        print("外向けの URL（エイリアス）が1つも取れない。何もしない。")
         return
-    print("残す:")
-    for target, uid in keep.items():
-        url = next(d["url"] for d in deployments if d["uid"] == uid)
-        print(f"  {target:<10} {url}")
 
-    doomed = [d for d in deployments if d["uid"] not in keep.values()]
+    keep, doomed = choose(deployments, aliases)
+    urls = {d["uid"]: d.get("url", d["uid"]) for d in deployments}
+    print("残す:")
+    for uid, reasons in keep.items():
+        print(f"  {urls.get(uid, uid)}  ← {', '.join(reasons)}")
+
     if not doomed:
         print("消すものは無い。")
         return
-
     print(f"消す（{len(doomed)} 件）:")
     for item in doomed:
         target = item.get("target") or "preview"
-        print(f"  {item.get('readyState',''):<8} {target:<10} {item['url']}")
+        print(f"  {item.get('readyState', ''):<8} {target:<10} {item.get('url', item['uid'])}")
         if not dry_run:
             _call("DELETE", f"/v13/deployments/{item['uid']}?teamId={team}", token)
     if dry_run:

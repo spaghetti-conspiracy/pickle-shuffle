@@ -17,7 +17,7 @@
 - セットアップ: `uv sync`（無ければ `python -m venv .venv && .venv/bin/pip install -e ".[dev]"`）
 - 開発サーバ: `uv run uvicorn app.main:app --reload --port 8000`
 - テスト: `uv run pytest`（ブラウザテストは既定で外れている。走らせるときは `uv run pytest -m browser`）
-- lint / format: `uv run ruff check .` / `uv run ruff format .`
+- lint と整形: `uv run ruff check .` / `uv run ruff format .`
 - ロックの確認: `uv lock --check`（`pyproject.toml` を変えたら。CI でも確かめている）
 - コンテナ: `docker compose up --build`
 

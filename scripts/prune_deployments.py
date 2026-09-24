@@ -2,17 +2,26 @@
 
 ``python scripts/prune_deployments.py [--dry-run]``
 
-**残すのは、外向けの URL（エイリアス）が指しているデプロイだけ。**
+**外向けの URL（エイリアス）が指しているデプロイを残し、それ以外を消す。**
 `pickle-shuffle.vercel.app`（本番）や `pickle-shuffle-staging.vercel.app`（staging）の
-ように、ドメインが紐づいているものは使われているので残す。それ以外（古いもの、
-失敗したもの）は消す。
+ように、ドメインが紐づいているものは使われているので残す。
 
-「環境ごとに最新の1つ」で選ぶと、ロールバックした直後のように外向けの URL が
+「環境ごとに最新の1つ」だけで選ぶと、ロールバックした直後のように外向けの URL が
 古い方を指しているとき、使われているデプロイを消してしまう。
 
-ビルド中・待機中のデプロイも残す。リリースの途中で、まだエイリアスが付く前の
-ものを消さないため。エイリアスが1つも取れなければ何もしない（取得の失敗で
-全部消えないように）。
+消し過ぎないよう、次のものも残す（残す理由はすべて表示する）:
+
+- 状態が「消してよい状態」（READY / ERROR / CANCELED）でないもの。ビルド中・待機中や、
+  Vercel が今後増やす知らない状態のものを消さない
+- 環境（production / preview）ごとの最新の READY。staging に固定ドメインを付けない設定
+  （`STAGING_DOMAIN` 未設定）でも、今の staging を消さないための保険
+- 作成から10分以内のもの。staging は出してから数秒後にエイリアスを付けるので、その隙間で消さない
+
+消す直前にも、そのデプロイ自身のエイリアスを取り直し、1つでもあれば飛ばす
+（一覧のページの境目で取りこぼしても、使われているものを消さない）。
+エイリアスが1つも取れなければ何もしない（取得の失敗で全部消えないように）。
+
+**実行すると、ロールバック先（エイリアスの付いていない古い本番デプロイ）も無くなる。**
 
 Vercel は出したものをすべて残す。費用は増えない（関数は呼ばれたときだけ動く）が、
 放っておくと困る:
@@ -34,14 +43,21 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable
 
 API = "https://api.vercel.com"
 
-IN_PROGRESS = {"QUEUED", "INITIALIZING", "BUILDING"}
-"""まだ終わっていないデプロイの状態。エイリアスが付く前かもしれないので消さない。"""
+DELETABLE = {"READY", "ERROR", "CANCELED"}
+"""消してよい状態。これ以外（ビルド中・待機中・BLOCKED・知らない状態）は残す。"""
+
+GONE = "DELETED"
+"""すでに消えている。残すとも消すとも扱わない。"""
+
+RECENT_MS = 10 * 60 * 1000
+"""作成からこれ以内のデプロイは残す。エイリアスを付ける前の隙間で消さないため。"""
 
 
 def _call(method: str, path: str, token: str) -> dict:
@@ -69,31 +85,47 @@ def _fetch_all(get: Callable[[str], dict], path: str, key: str) -> list[dict]:
 
 
 def deployment_of(alias: dict) -> str | None:
-    """エイリアスが指しているデプロイの id。"""
+    """エイリアスが指しているデプロイの id。リダイレクトだけのエイリアスでは None。"""
     return alias.get("deploymentId") or (alias.get("deployment") or {}).get("id")
 
 
 def choose(
-    deployments: Iterable[dict], aliases: Iterable[dict]
+    deployments: Iterable[dict], aliases: Iterable[dict], now_ms: int
 ) -> tuple[dict[str, list[str]], list[dict]]:
-    """残すデプロイ（id → 残す理由）と、消すデプロイを決める。
-
-    残すのは、外向けの URL が指しているものと、まだ終わっていないもの。
-    """
+    """残すデプロイ（id → 残す理由）と、消すデプロイを決める。"""
+    deployments = sorted(deployments, key=lambda d: d.get("created", 0), reverse=True)
     keep: dict[str, list[str]] = {}
+
+    def remember(uid: str, reason: str) -> None:
+        keep.setdefault(uid, []).append(reason)
+
     for alias in aliases:
         uid = deployment_of(alias)
         if uid:
-            keep.setdefault(uid, []).append(alias.get("alias", "?"))
-    doomed = []
+            remember(uid, alias.get("alias", "?"))
+
+    latest_seen: set[str] = set()
     for item in deployments:
-        if item["uid"] in keep:
+        state = item.get("readyState")
+        target = item.get("target") or "preview"
+        if state == GONE:
             continue
-        if item.get("readyState") in IN_PROGRESS:
-            keep[item["uid"]] = [f"{item['readyState']}（終わっていない）"]
-            continue
-        doomed.append(item)
+        if state not in DELETABLE:
+            remember(item["uid"], f"状態 {state}（消してよい状態ではない）")
+        if state == "READY" and target not in latest_seen:
+            latest_seen.add(target)
+            remember(item["uid"], f"{target} の最新")
+        if now_ms - item.get("created", 0) < RECENT_MS:
+            remember(item["uid"], "作成から10分以内")
+
+    doomed = [d for d in deployments if d["uid"] not in keep and d.get("readyState") != GONE]
     return keep, doomed
+
+
+def still_aliased(get: Callable[[str], dict], uid: str, team: str) -> bool:
+    """消す直前に、そのデプロイにエイリアスが付いていないかを取り直す。"""
+    found = get(f"/v2/deployments/{uid}/aliases?teamId={team}")
+    return bool(found.get("aliases"))
 
 
 def main() -> None:
@@ -117,7 +149,7 @@ def main() -> None:
         print("外向けの URL（エイリアス）が1つも取れない。何もしない。")
         return
 
-    keep, doomed = choose(deployments, aliases)
+    keep, doomed = choose(deployments, aliases, now_ms=int(time.time() * 1000))
     urls = {d["uid"]: d.get("url", d["uid"]) for d in deployments}
     print("残す:")
     for uid, reasons in keep.items():
@@ -129,7 +161,11 @@ def main() -> None:
     print(f"消す（{len(doomed)} 件）:")
     for item in doomed:
         target = item.get("target") or "preview"
-        print(f"  {item.get('readyState', ''):<8} {target:<10} {item.get('url', item['uid'])}")
+        line = f"  {item.get('readyState', ''):<8} {target:<10} {item.get('url', item['uid'])}"
+        if still_aliased(get, item["uid"], team):
+            print(f"{line}  ← 直前に見るとエイリアスが付いていたので残す")
+            continue
+        print(line)
         if not dry_run:
             _call("DELETE", f"/v13/deployments/{item['uid']}?teamId={team}", token)
     if dry_run:

@@ -102,7 +102,7 @@ def build_history(db: Session, session_id: int) -> History:
     levels = round_levels(db, session_id)
 
     rows = db.execute(
-        select(Match.round_id, Match.id, MatchSlot.team_index, MatchSlot.member_id)
+        select(Round.seq, Match.round_id, Match.id, MatchSlot.team_index, MatchSlot.member_id)
         .join(MatchSlot, MatchSlot.match_id == Match.id)
         .join(Round, Round.id == Match.round_id)
         .where(Round.session_id == session_id, Round.status == RoundStatus.ADOPTED)
@@ -111,9 +111,13 @@ def build_history(db: Session, session_id: int) -> History:
 
     teams: dict[int, dict[int, list[int]]] = {}
     round_of: dict[int, int] = {}
-    for round_id, match_id, team_index, member_id in rows:
+    seq_of: dict[int, int] = {}
+    for seq, round_id, match_id, team_index, member_id in rows:
         round_of[match_id] = round_id
+        seq_of[match_id] = seq or 0
         teams.setdefault(match_id, {}).setdefault(team_index, []).append(member_id)
+    latest_seq = max(seq_of.values(), default=None)
+    last_round_groups: list[tuple[int, int, int, int]] = []
 
     history = History()
     for match_id, sides in teams.items():
@@ -139,7 +143,12 @@ def build_history(db: Session, session_id: int) -> History:
             for y in team_b:
                 key = pair_key(x, y)
                 history.opponent_count[key] = history.opponent_count.get(key, 0) + 1
+        group = tuple(sorted((*team_a, *team_b)))
+        history.group_count[group] = history.group_count.get(group, 0) + 1
+        if seq_of[match_id] == latest_seq:
+            last_round_groups.append(group)
 
+    history.last_round_groups = tuple(last_round_groups)
     return history
 
 

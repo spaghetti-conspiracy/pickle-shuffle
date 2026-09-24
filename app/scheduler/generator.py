@@ -174,6 +174,8 @@ class _State:
     adjusted: dict[int, int]
     sit_out_streak: dict[int, int]
     just_returned: set[int]
+    group: dict[Group, int]
+    last_groups: tuple[Group, ...]
 
     @classmethod
     def from_history(cls, active: Sequence[PlayerStat], history: History) -> _State:
@@ -184,6 +186,8 @@ class _State:
             adjusted={p.id: p.adjusted for p in active},
             sit_out_streak={p.id: p.sit_out_streak for p in active},
             just_returned={p.id for p in active if p.just_returned},
+            group=dict(history.group_count),
+            last_groups=history.last_round_groups,
         )
 
     def copy(self) -> _State:
@@ -194,6 +198,8 @@ class _State:
             adjusted=dict(self.adjusted),
             sit_out_streak=dict(self.sit_out_streak),
             just_returned=set(self.just_returned),
+            group=dict(self.group),
+            last_groups=self.last_groups,
         )
 
     def apply(
@@ -204,7 +210,11 @@ class _State:
     ) -> None:
         """1ラウンドぶん進める。"""
         playing: set[int] = set()
+        groups: list[Group] = []
         for pair_a, pair_b in pairings:
+            group: Group = tuple(sorted((*pair_a, *pair_b)))  # type: ignore[assignment]
+            groups.append(group)
+            self.group[group] = self.group.get(group, 0) + 1
             for team in (pair_a, pair_b):
                 playing.update(team)
                 self.partner[team] = self.partner.get(team, 0) + 1
@@ -223,9 +233,12 @@ class _State:
             if member_id in playing:
                 self.adjusted[member_id] += 1
                 self.sit_out_streak[member_id] = 0
-                self.just_returned.discard(member_id)
             else:
                 self.sit_out_streak[member_id] += 1
+        # 休み明けの扱いは、出場したかどうかに関わらず1ラウンドで消える
+        # （stats_rules.is_just_returned は直近の記録が休憩かどうかだけを見る）。
+        self.just_returned.clear()
+        self.last_groups = tuple(groups)
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +319,19 @@ class _Scorer:
         self.pair_has_beginner: dict[Pair, int] = {}
         self.pair_strength: dict[Pair, int] = {}
 
+        # 出場可能メンバーの中に、まだ組んでいない組んでよい相手が残っているか。
+        # 残っているのに同じ相手と2回目を組むのが、当人の気づく「早すぎる重複」。
+        partner = state.partner
+        self._has_fresh_partner: dict[int, bool] = {
+            a.id: any(
+                b.id != a.id
+                and partner.get(pair_key(a.id, b.id), 0) == 0
+                and (a.knows_rules or b.knows_rules)
+                for b in players
+            )
+            for a in players
+        }
+
         for a, b in combinations(players, 2):
             key = pair_key(a.id, b.id)
             self.pair_kind[key] = _pair_kind(a, b)
@@ -329,7 +355,11 @@ class _Scorer:
         w = self._weights
         # 優先度1: 同じ相手とばかり組まないようにする。
         # 増分 2n+1 は「ペアを組んだ回数の二乗和」を最小化する = 回数を均す。
-        cost = w.partner * (2 * self._state.partner.get(key, 0) + 1)
+        times = self._state.partner.get(key, 0)
+        cost = w.partner * (2 * times + 1)
+        # 優先度1: まだ組んでいない相手がいるうちは、同じ相手と2回目を組ませない。
+        if times and self._has_fresh_partner[a.id] and self._has_fresh_partner[b.id]:
+            cost += w.premature_repeat
 
         # 優先度3: ルールを覚えていない者同士でペアを組ませない。
         # 初心者はボールが返せず試合が成立しないので最も強く避ける。
@@ -376,6 +406,22 @@ class _Scorer:
         self._match_cost_cache[key] = cost
         return cost
 
+    def _familiar_group_cost(self, group: Group) -> int:
+        """見慣れた顔ぶれの試合への減点。ペアの分け方には依存しない。
+
+        同じ4人は、ペアを組み替えればペアの重複を避けられるので、
+        ペアの減点だけでは集中してしまう。同じ3人は長い目で見れば
+        避けきれないので、直前のラウンドに続けて起きる場合だけを見る。
+        """
+        w = self._weights
+        members = set(group)
+        cost = w.same_group * self._state.group.get(tuple(sorted(group)), 0)  # type: ignore[arg-type]
+        if w.recent_trio and any(
+            len(members.intersection(last)) >= 3 for last in self._state.last_groups
+        ):
+            cost += w.recent_trio
+        return cost
+
     def group_cost(self, group: Group) -> tuple[int, tuple[Pair, Pair]]:
         """4人を1試合にしたときの最小コストと、そのときのペア分け。
 
@@ -409,6 +455,7 @@ class _Scorer:
                     best_pairing = (pair_a, pair_b)
 
         assert best_cost is not None and best_pairing is not None
+        best_cost += self._familiar_group_cost(group)
         result = (best_cost, best_pairing)
         self._group_cache[group] = result
         return result

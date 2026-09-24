@@ -344,6 +344,98 @@ def test_partner_repeats_are_evened_out(count, rounds):
     assert max(counts.values()) <= limit
 
 
+def _partners_in_order(plans: list[RoundPlan]) -> dict[int, list[int]]:
+    """各人が組んだ相手を、出場した順に並べる。"""
+    partners: dict[int, list[int]] = {}
+    for plan in plans:
+        for match in plan.matches:
+            for a, b in (match.team_a, match.team_b):
+                partners.setdefault(a, []).append(b)
+                partners.setdefault(b, []).append(a)
+    return partners
+
+
+def _first_repeat(partners: list[int]) -> int | None:
+    """同じ相手と2回目を組んだのが何回目の出場か。無ければ None。"""
+    seen: set[int] = set()
+    for nth, partner_id in enumerate(partners, 1):
+        if partner_id in seen:
+            return nth
+        seen.add(partner_id)
+    return None
+
+
+@pytest.mark.parametrize("seed", [11, 22])
+def test_no_partner_is_repeated_while_others_remain(seed):
+    """まだ組んでいない相手がいるうちは、同じ相手と2回目を組まない。
+
+    同じ相手とのペアは当人が必ず気づくので、対戦の重複よりずっと目立つ。
+    16人4面なら全員が毎回出るので、15ラウンドは全員が毎回違う相手と組める。
+    専用の減点が無いと、対戦相手を変えるためにペアを繰り返し、
+    6回目の出場で同じ相手と組む人も出ていた（15ラウンドで8〜14組）。
+    同じ4人・同じ3人を避ける減点と競合するので、0組までは保証しない
+    （13シードの実測で、11シードが0組、残りが3〜4組）。
+    """
+    sim = Simulator(make_members(16), seed=seed, court_count=4)
+    sim.run(15)
+    repeated = sum(n - 1 for n in sim.partner_counts().values())
+    assert repeated <= 4
+
+
+@pytest.mark.parametrize("seed", [2, 3])
+def test_partner_repeats_come_only_near_the_end_of_a_cycle(seed):
+    """12人3面でも、同じ相手との2回目は一巡（11人）の終わり近くにしか来ない。
+
+    一巡の終わりの重複は、1ラウンドずつ組む方式では避けきれない
+    （残った未ペアの組合せを、全員分のペアにちょうど分けられなくなる）。
+    16シードの実測で最も早いもので7回目、大半は9回目以降。
+    避けたいのは、組める相手がまだ何人も残っている序盤の重複で、
+    専用の減点が無いとこの2シードでは4回目・6回目に起きていた。
+    """
+    sim = Simulator(make_members(12), seed=seed, court_count=3)
+    partners = _partners_in_order(sim.run(24))
+    firsts = [_first_repeat(ps) for ps in partners.values()]
+    assert all(first is None or first >= 7 for first in firsts), firsts
+
+
+def _repeated_foursomes(plans: list[RoundPlan]) -> int:
+    """同じ4人の試合（ペアの分け方は問わない）が繰り返された回数。"""
+    seen: Counter = Counter(
+        tuple(sorted(match.member_ids)) for plan in plans for match in plan.matches
+    )
+    return sum(n - 1 for n in seen.values())
+
+
+def test_the_same_four_do_not_keep_meeting():
+    """同じ4人で試合を繰り返さない。固まると皆で集まってやっている感が薄れる。
+
+    ペアの重複だけを避けると、同じ4人を組み替えれば（ab|cd → ac|bd）
+    ペアは全部新しくなるので、そこへ逃げる。4の倍数の人数で起きやすい。
+    """
+    sim = Simulator(make_members(16), seed=11, court_count=4)
+    assert _repeated_foursomes(sim.run(16)) == 0
+
+
+def test_the_same_four_meet_again_without_the_mechanism():
+    """上のテストが意味を持つことを、対照で確かめる。"""
+    weights = dataclasses.replace(Weights(), same_group=0, recent_trio=0)
+    sim = Simulator(make_members(16), seed=11, court_count=4, weights=weights)
+    assert _repeated_foursomes(sim.run(16)) > 0, "機構を切っても起きないなら何も見張っていない"
+
+
+def test_three_of_the_last_foursome_are_rarely_together_again():
+    """直前のラウンドと3人以上同じ顔ぶれの試合は、ほとんど作らない。"""
+    sim = Simulator(make_members(12), seed=11, court_count=3)
+    plans = sim.run(24)
+    again = 0
+    for before, after in zip(plans, plans[1:], strict=False):
+        last = [set(m.member_ids) for m in before.matches]
+        again += sum(
+            any(len(set(m.member_ids) & group) >= 3 for group in last) for m in after.matches
+        )
+    assert again <= 1
+
+
 def test_alternating_halves_do_not_fix_the_pairings():
     """16名8枠では出場者が交代制になるが、組む相手は固定されない。
 
@@ -771,8 +863,14 @@ def test_the_beginner_burden_is_uneven_without_the_mechanism():
 
     `beginner_spread` を切ると受け持ち回数がばらつくことを示す。これが無いと
     「閾値が緩すぎて何も検出していない」状態に気づけない。
+
+    ばらけの減点（`premature_repeat` / `same_group` / `recent_trio`）も一緒に切る。
+    どれも初心者と組む相手を散らす方向に働くので、残すと受け持ちが均され、
+    `beginner_spread` の効きが見えなくなる。
     """
-    weights = dataclasses.replace(Weights(), beginner_spread=0)
+    weights = dataclasses.replace(
+        Weights(), beginner_spread=0, premature_repeat=0, same_group=0, recent_trio=0
+    )
     sim = Simulator(make_members(16, beginners=2), seed=1357, weights=weights)
     sim.run(24)
     counts = [sim.history.beginner_partners(i) for i in range(3, 17)]

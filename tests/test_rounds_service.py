@@ -74,6 +74,33 @@ def test_undo_restores_everything(db):
     )
 
 
+def _groups_of(round_) -> list[tuple[int, ...]]:
+    return [tuple(sorted(slot.member_id for slot in m.slots)) for m in round_.matches]
+
+
+def test_history_keeps_the_foursomes_and_the_latest_round(db):
+    """同じ4人の回数と、直前のラウンドの顔ぶれを記録から導出する。
+
+    取り消せば直前のラウンドも1つ前に戻る（統計は記録から毎回導出するため）。
+    """
+    session = make_session(db)
+    first = rounds_service.generate(db, session)
+    rounds_service.adopt(db, first)
+    second = rounds_service.generate(db, session)
+    rounds_service.adopt(db, second)
+
+    history = stats_service.build_history(db, session.id)
+    assert sorted(history.last_round_groups) == sorted(_groups_of(second))
+    assert sum(history.group_count.values()) == len(first.matches) + len(second.matches)
+    for group in _groups_of(first) + _groups_of(second):
+        assert history.group_count[group] >= 1
+
+    rounds_service.undo(db, second)
+    history = stats_service.build_history(db, session.id)
+    assert sorted(history.last_round_groups) == sorted(_groups_of(first))
+    assert sum(history.group_count.values()) == len(first.matches)
+
+
 def test_only_the_latest_adopted_round_can_be_undone(db):
     session = make_session(db)
     first = rounds_service.adopt(db, rounds_service.generate(db, session))

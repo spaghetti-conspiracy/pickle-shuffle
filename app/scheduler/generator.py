@@ -320,9 +320,9 @@ class _Scorer:
         member_id と無相関なので、id の小さい組だけが生き残ることもない
         （不変則9/10）。塩はラウンドごとに変わる。
         """
-        material = struct.pack("<q", self._tie_salt) + b"".join(
-            struct.pack("<q", member_id) for group in groups for member_id in group
-        )
+        # 塩と member_id を1回の pack で並べる。1つずつ pack して繋いだものと同じバイト列。
+        flat = [member_id for group in groups for member_id in group]
+        material = struct.pack(f"<{len(flat) + 1}q", self._tie_salt, *flat)
         return int.from_bytes(hashlib.blake2b(material, digest_size=8).digest(), "little")
 
     def _compute_pair_cost(self, a: PlayerStat, b: PlayerStat, key: Pair) -> int:
@@ -467,6 +467,23 @@ def _candidate_sets(
     return sets
 
 
+def _keyed_candidates(
+    indexes: Sequence[int],
+    costs: Sequence[int],
+    parents: Sequence[int],
+    groups: Sequence[Group],
+    masks: Sequence[int],
+    batches: Sequence[Batch],
+    scorer: _Scorer,
+) -> list[tuple[int, int, Batch, int]]:
+    """指定した候補を (コスト, tie_break, 組み分け, 使用済みビット) にする。"""
+    keyed = []
+    for k in indexes:
+        batch: Batch = (*batches[parents[k]], groups[k])
+        keyed.append((costs[k], scorer.tie_break(batch), batch, masks[k]))
+    return keyed
+
+
 def split_into_matches(
     ids: Sequence[int],
     n_matches: int,
@@ -480,34 +497,76 @@ def split_into_matches(
     同じ分け方を数え直さずに済む。それでも全通りは 8人で35、12人で5,775、
     16人で262万と増えるので、1試合決めるごとに安い順へ刈り込む。
     8人（2面）なら35通りすべてが残るため、よく使う構成では厳密な最小解になる。
+
+    候補の大半は刈り込みで捨てるので、捨てる候補には組み分けのタプルも
+    同点ほぐしのハッシュも作らない。16人4面では1回の生成で約130万件の候補を作り、
+    残すのは各段 ``beam_width`` 件だけ。結果は、全候補に (コスト, tie_break,
+    組み分け, 使用済みビット) を付けて小さい順に取るのと完全に同じになる。
     """
     # 既定値を引数に書くと定義時に束縛され、定数を差し替えても効かない。
     beam_width = BATCH_BEAM if beam_width is None else beam_width
     total = len(ids)
+    bits = [1 << i for i in range(total)]
+    group_cache = scorer._group_cache
     states: list[tuple[int, Batch, int]] = [(0, (), 0)]  # コスト, 組み分け, 使用済みビット
 
-    for _ in range(n_matches):
-        nxt: list[tuple[int, Batch, int]] = []
-        for cost, groups, used in states:
-            first = next(i for i in range(total) if not used >> i & 1)
-            rest = [i for i in range(first + 1, total) if not used >> i & 1]
-            for combo in combinations(rest, PLAYERS_PER_MATCH - 1):
-                indexes = (first, *combo)
-                group: Group = tuple(ids[i] for i in indexes)  # type: ignore[assignment]
-                group_cost, _pairing = scorer.group_cost(group)
-                mask = used
-                for i in indexes:
-                    mask |= 1 << i
-                nxt.append((cost + group_cost, (*groups, group), mask))
-        if len(nxt) <= beam_width:
+    for level in range(n_matches):
+        # 各段の候補数は、残す案の数 x 残りの人から先頭以外の3人を選ぶ組合せ数。
+        remaining = total - level * PLAYERS_PER_MATCH
+        n_candidates = len(states) * math.comb(remaining - 1, PLAYERS_PER_MATCH - 1)
+        if n_candidates <= beam_width:
+            # 刈り込まない段（8人2面など）。候補をそのまま状態にする。
+            nxt: list[tuple[int, Batch, int]] = []
+            for cost, batch, used in states:
+                first = next(i for i in range(total) if not used & bits[i])
+                rest = [i for i in range(first + 1, total) if not used & bits[i]]
+                head = ids[first]
+                base = used | bits[first]
+                for a, b, c in combinations(rest, PLAYERS_PER_MATCH - 1):
+                    group: Group = (head, ids[a], ids[b], ids[c])
+                    cached = group_cache.get(group)
+                    group_cost = cached[0] if cached is not None else scorer.group_cost(group)[0]
+                    mask = base | bits[a] | bits[b] | bits[c]
+                    nxt.append((cost + group_cost, (*batch, group), mask))
             states = nxt
-        else:
-            # キーを挟まないと、同点はタプルの次の要素＝member_id の辞書順で
-            # 決まり、id の小さい組ばかりが生き残る（不変則9/10）。
-            keyed = [(c, scorer.tie_break(g), g, m) for c, g, m in nxt]
-            states = [(c, g, m) for c, _key, g, m in heapq.nsmallest(beam_width, keyed)]
+            continue
 
-    return [(cost, groups) for cost, groups, _used in states]
+        # 刈り込む段。候補は列ごとに持ち、組み分けのタプルは残すと決まった候補にだけ作る。
+        costs: list[int] = []
+        parents: list[int] = []
+        groups: list[Group] = []
+        masks: list[int] = []
+        for parent, (cost, _batch, used) in enumerate(states):
+            first = next(i for i in range(total) if not used & bits[i])
+            rest = [i for i in range(first + 1, total) if not used & bits[i]]
+            head = ids[first]
+            base = used | bits[first]
+            for a, b, c in combinations(rest, PLAYERS_PER_MATCH - 1):
+                group = (head, ids[a], ids[b], ids[c])
+                cached = group_cache.get(group)
+                group_cost = cached[0] if cached is not None else scorer.group_cost(group)[0]
+                costs.append(cost + group_cost)
+                parents.append(parent)
+                groups.append(group)
+                masks.append(base | bits[a] | bits[b] | bits[c])
+
+        batches = [batch for _cost, batch, _used in states]
+        # 境目のコスト（安い方から beam_width 番目）より安い候補は必ず残る。
+        # 境目と同点の候補だけを tie_break で選ぶ。
+        # キーを挟まないと、同点はタプルの次の要素＝member_id の辞書順で
+        # 決まり、id の小さい組ばかりが生き残る（不変則9/10）。
+        cutoff = heapq.nsmallest(beam_width, costs)[-1]
+        below = [k for k, cost in enumerate(costs) if cost < cutoff]
+        tied = [k for k, cost in enumerate(costs) if cost == cutoff]
+        kept = _keyed_candidates(below, costs, parents, groups, masks, batches, scorer)
+        kept += heapq.nsmallest(
+            beam_width - len(kept),
+            _keyed_candidates(tied, costs, parents, groups, masks, batches, scorer),
+        )
+        kept.sort()
+        states = [(cost, batch, mask) for cost, _key, batch, mask in kept]
+
+    return [(cost, batch) for cost, batch, _used in states]
 
 
 # ---------------------------------------------------------------------------

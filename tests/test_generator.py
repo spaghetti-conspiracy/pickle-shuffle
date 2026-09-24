@@ -593,6 +593,94 @@ def test_two_courts_enumerate_every_way_to_split_the_players():
     assert len({frozenset(map(frozenset, batch)) for _cost, batch in batches}) == 35
 
 
+def _reference_split_into_matches(ids, n_matches, scorer, beam_width):
+    """`split_into_matches` の素直な実装。速くした実装と結果が同じかを照合する。
+
+    全候補に組み分けのタプルと tie_break を付け、小さい順に beam_width 件を取る。
+    """
+    import heapq
+    from itertools import combinations
+
+    total = len(ids)
+    states = [(0, (), 0)]
+    for _ in range(n_matches):
+        nxt = []
+        for cost, groups, used in states:
+            first = next(i for i in range(total) if not used >> i & 1)
+            rest = [i for i in range(first + 1, total) if not used >> i & 1]
+            for combo in combinations(rest, 3):
+                indexes = (first, *combo)
+                group = tuple(ids[i] for i in indexes)
+                group_cost, _pairing = scorer.group_cost(group)
+                mask = used
+                for i in indexes:
+                    mask |= 1 << i
+                nxt.append((cost + group_cost, (*groups, group), mask))
+        if len(nxt) <= beam_width:
+            states = nxt
+        else:
+            keyed = [(c, scorer.tie_break(g), g, m) for c, g, m in nxt]
+            states = [(c, g, m) for c, _key, g, m in heapq.nsmallest(beam_width, keyed)]
+    return [(cost, groups) for cost, groups, _used in states]
+
+
+def _scorer_for(stats, history, salt):
+    from app.scheduler.generator import _Scorer, _State
+
+    state = _State.from_history(stats, history)
+    return _Scorer(stats, state, Weights(), rng=random.Random(salt), tie_salt=salt)
+
+
+def _split_cases():
+    """(ラベル, stats, history, コート数)。同点だらけの場合と、履歴が溜まった場合。"""
+    cases = []
+    for count in (12, 16):
+        cases.append((f"全員同じ{count}人", uniform_players(count), History(), count // 4))
+    for count, courts, beginners, racket in ((12, 3, 2, 2), (13, 3, 3, 2), (16, 4, 0, 0)):
+        sim = Simulator(
+            make_members(count, beginners=beginners, racket=racket), seed=31, court_count=courts
+        )
+        sim.run(6)
+        cases.append((f"{count}人{courts}面・6ラウンド後", sim.player_stats(), sim.history, courts))
+    return cases
+
+
+@pytest.mark.parametrize("beam_width", [512, 16, 4])
+def test_the_fast_split_matches_the_straightforward_one(beam_width):
+    """速くした組み分け探索が、素直な実装と完全に同じ結果を返す。
+
+    捨てる候補にはタプルもハッシュも作らないようにしたが、残す候補の集合も
+    並び順も変えてはならない（並び順は後段の乱数の引き方に効く）。
+    刈り込み幅を小さくして、境目での同点を多く起こす。
+    """
+    for label, stats, history, courts in _split_cases():
+        active = [p for p in stats if p.status is MemberStatus.ACTIVE]
+        ids = tuple(p.id for p in active)[: courts * 4]
+        reference_scorer = _scorer_for(active, history, salt=7)
+        fast_scorer = _scorer_for(active, history, salt=7)
+
+        expected = _reference_split_into_matches(ids, courts, reference_scorer, beam_width)
+        actual = split_into_matches(ids, courts, fast_scorer, beam_width=beam_width)
+
+        assert actual == expected, label
+        # 4人のペア分けの抽選（乱数を引く順）も変わっていない。
+        assert fast_scorer._group_cache == reference_scorer._group_cache, label
+
+
+def test_tie_break_bytes_are_unchanged():
+    """tie_break の入力は、塩と member_id を1つずつ pack して繋いだものと同じ。"""
+    import hashlib
+    import struct
+
+    scorer = _scorer_for(uniform_players(8), History(), salt=123)
+    groups = ((1, 2, 3, 4), (5, 6, 7, 8))
+    material = struct.pack("<q", 123) + b"".join(
+        struct.pack("<q", member_id) for group in groups for member_id in group
+    )
+    expected = int.from_bytes(hashlib.blake2b(material, digest_size=8).digest(), "little")
+    assert scorer.tie_break(groups) == expected
+
+
 # ---------------------------------------------------------------------------
 # 初心者（優先度3〜5, 6d）
 # ---------------------------------------------------------------------------

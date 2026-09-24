@@ -88,6 +88,7 @@ npx vercel env add ADMIN_PASSWORD production
 
 - [ ] staging で動きを見たか
 - [ ] `main` の CI が緑か（ブラウザテストを含む）
+- [ ] バージョンを上げたか（`pyproject.toml`、`uv lock`、`app/__init__.py`。タグと食い違うと release が止まる）
 - [ ] **スキーマを変えた回なら、本番 DB に移行を流したか**（下記）
 
 ---

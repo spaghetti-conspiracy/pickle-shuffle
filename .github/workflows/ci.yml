@@ -46,6 +46,11 @@ jobs:
         # `--frozen` でロックどおりに入れる。CI と手元と本番で版がずれない。
         run: uv sync --frozen --python ${{ matrix.python }}
 
+      - name: ロックが pyproject.toml と合っているか
+        # `--frozen` は食い違っていても黙ってロックどおりに入れるので、ここで確かめる
+        # （バージョンを上げたのに uv.lock を直し忘れた、など）。
+        run: uv lock --check
+
       - name: lint
         run: uv run ruff check .
 

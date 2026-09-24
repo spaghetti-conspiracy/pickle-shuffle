@@ -132,6 +132,11 @@ a {
   margin-top: 1.5rem;
 }
 
+/* 合言葉を通る前は空。余白だけ取らないよう隠す。 */
+.version:empty {
+  display: none;
+}
+
 /* ---------- 管理画面 ---------- */
 
 .admin {

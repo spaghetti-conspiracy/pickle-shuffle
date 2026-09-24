@@ -51,6 +51,13 @@ jobs:
           git merge-base --is-ancestor "$sha" origin/main \
             || { echo "::error::$TAG は main に入っていない"; exit 1; }
 
+          # **バージョンを上げ忘れていないか。** タグと app.__version__ が食い違うと、
+          # 選択画面に古いバージョンが出たまま本番へ出る。
+          version=$(git show "$sha:app/__init__.py" | sed -nE 's/^__version__ = "(.*)"$/\1/p')
+          echo "app.__version__: $version"
+          test "v$version" = "$TAG" \
+            || { echo "::error::$TAG と app.__version__（$version）が一致しない"; exit 1; }
+
           # **main への push で走った CI だけを見る。**
           # PR の CI はブラウザテストが skip され、それでも全体は success に
           # なるので、これを許すと画面の確認を一度も通さずに本番へ出せる。

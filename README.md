@@ -40,7 +40,7 @@ SQLite で軽く動かしたいときは、`docker-compose.yml` の `web` の `D
 ### 開発
 
 ```bash
-uv sync                                   # または python -m venv .venv && pip install -e ".[dev]"
+uv sync                                   # uv が前提（開発用の依存は pyproject.toml の [dependency-groups] にあり、pip install -e ".[dev]" では入らない）
 uv run uvicorn app.main:app --reload --port 8000   # DB 未指定なら ./data/app.db (SQLite)
 uv run pytest                             # テストはインメモリ SQLite
 uv run ruff check .

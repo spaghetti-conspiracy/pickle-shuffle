@@ -130,7 +130,7 @@ class Simulator:
         self.status[spec.id] = MemberStatus.ACTIVE
         self.states[spec.id] = []
         self.seqs[spec.id] = []
-        self.baseline[spec.id] = min((p.adjusted_whole for p in actives), default=0)
+        self.baseline[spec.id] = min((p.adjusted_rounded for p in actives), default=0)
 
     def set_status(self, member_id: int, status: MemberStatus) -> None:
         """休憩・復帰・離脱。"""

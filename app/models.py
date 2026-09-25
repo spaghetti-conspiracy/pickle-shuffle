@@ -244,7 +244,10 @@ class Member(Base):
     """
 
     baseline: Mapped[int] = mapped_column(Integer, default=0)
-    """途中参加者の下駄。登録時点の active メンバーの最小 adjusted。"""
+    """途中参加者の下駄。登録時点の active メンバーの adjusted（四捨五入）の最小値。
+
+    離脱から戻った人は、出場回数とみなし出場を差し引いた値（負になることもある）。
+    """
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

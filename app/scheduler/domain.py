@@ -219,6 +219,11 @@ class Weights:
     avoid_match: int = 1_000
 
 
+def round_half_up(value: Fraction | int) -> int:
+    """四捨五入（0.5 は切り上げ）。Python の ``round`` は偶数への丸めなので使わない。"""
+    return math.floor(Fraction(value) + Fraction(1, 2))
+
+
 @dataclass(frozen=True)
 class PlayerStat:
     """生成に必要な、あるメンバーの現在の状態と履歴。
@@ -232,7 +237,11 @@ class PlayerStat:
     gender: Gender
     level: Level
     baseline: int = 0
-    """途中参加者の下駄。参加登録時点の active メンバーの最小 ``adjusted``。"""
+    """途中参加者の下駄。参加登録時点の active メンバーの ``adjusted_rounded`` の最小値。
+
+    離脱から戻った人は、戻った時点で ``adjusted_rounded`` がちょうど最小値になるよう、
+    出場回数とみなし出場（四捨五入）を差し引いた値にする（負になることもある）。
+    """
 
     plays: int = 0
     """実際に出場した回数。"""
@@ -259,13 +268,15 @@ class PlayerStat:
         return self.baseline + self.plays + Fraction(self.rest_credit)
 
     @property
-    def adjusted_whole(self) -> int:
-        """``adjusted`` の整数部分。生成の出場の枠と評価関数、途中参加の下駄はこちらを使う。
+    def adjusted_rounded(self) -> int:
+        """``adjusted`` を四捨五入した整数。生成の出場の枠と評価関数、途中参加の下駄はこちらを使う。
 
         端数のまま使うと、ほぼ全員の値がばらばらになり、同じ値の人の中から入れ替えて
         良い組み方を探す余地が消える（ばらけが落ちる）。スコアも整数で保てる（不変則10）。
+        切り捨てにすると、休憩から戻った人がみなし出場の端数の分だけ決まって余計に取り戻す
+        （16名2面で5ラウンド休むと平均 +1.13 試合）。四捨五入ならこの偏りはほぼ消える。
         """
-        return math.floor(self.adjusted)
+        return round_half_up(self.adjusted)
 
     @property
     def is_beginner(self) -> bool:

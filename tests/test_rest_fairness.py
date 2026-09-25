@@ -265,6 +265,35 @@ def test_someone_who_left_and_came_back_restarts_at_the_bottom(db, rests_before_
     assert back.id in soon, "戻っても出番が無い"
 
 
+def test_someone_who_left_after_a_long_rest_also_restarts_at_the_bottom(db):
+    """長く休んでみなし出場（端数あり）が付いた人が離脱して戻っても、最小値から再開する。
+
+    10名2面で3ラウンド休むと、休んでいる間は9人で8枠を争うので、みなし出場は
+    8/9 x 3 − 1 = 5/3。下駄の計算でこれを差し引かないと、戻った人が上乗せされて待たされる。
+    """
+    session = _session(db, count=10)
+    for _ in range(3):
+        _next(db, session)
+    member = _member(db, session)
+    sessions_service.update_member(db, member, status=MemberStatus.RESTING)
+    for _ in range(3):
+        _next(db, session)
+    sessions_service.update_member(db, member, status=MemberStatus.ACTIVE)
+    _next(db, session)
+    assert _stat(db, session, member.id).rest_credit > 0, "テストの前提: みなし出場が付いている"
+
+    sessions_service.remove_member(db, member)
+    for _ in range(2):
+        _next(db, session)
+    back = sessions_service.add_member(db, session, db.get(Person, member.person_id))
+
+    stats = stats_service.build_player_stats(db, session.id)
+    lowest = min(
+        p.adjusted_rounded for p in stats if p.status is MemberStatus.ACTIVE and p.id != back.id
+    )
+    assert _stat(db, session, back.id).adjusted_rounded == lowest
+
+
 def test_rests_on_both_sides_of_leaving_are_counted_separately(db):
     """「休憩 → 離脱 → 戻ってすぐ休憩」は2回の休憩。記録の上でつながって1回にならない。
 

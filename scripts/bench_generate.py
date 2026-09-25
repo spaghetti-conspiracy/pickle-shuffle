@@ -147,14 +147,27 @@ def _run_once(root: Path, args: argparse.Namespace) -> dict[str, dict[str, float
 
 
 def _parse_configs(text: str) -> list[tuple[int, int, int, int]]:
-    """例: "12x3,13x3:3:2" → [(12, 3, 0, 0), (13, 3, 3, 2)]。"""
+    """例: "12x3,13x3:3:2" → [(12, 3, 0, 0), (13, 3, 3, 2)]。読めなければ ValueError。"""
     configs = []
     for item in text.split(","):
         size, _, rest = item.partition(":")
-        count, courts = (int(v) for v in size.split("x"))
-        beginners, racket = (int(v) for v in rest.split(":")) if rest else (0, 0)
+        try:
+            count, courts = (int(v) for v in size.split("x"))
+            beginners, racket = (int(v) for v in rest.split(":")) if rest else (0, 0)
+        except ValueError:
+            raise ValueError(f"「{item}」は 人数x面数 か 人数x面数:初心者:ラケット経験者 の形で書く") from None
+        if count < 1 or courts < 1 or beginners < 0 or racket < 0 or beginners + racket > count:
+            raise ValueError(f"「{item}」の数が合わない（人数と面数は1以上、初心者とラケット経験者は人数の内訳）")
         configs.append((count, courts, beginners, racket))
     return configs
+
+
+def _parse_seeds(text: str) -> list[int]:
+    """例: "11,22,33" → [11, 22, 33]。読めなければ ValueError。"""
+    try:
+        return [int(s) for s in text.split(",")]
+    except ValueError:
+        raise ValueError(f"「{text}」は 11,22,33 のように整数をカンマで区切って書く") from None
 
 
 def _positive(text: str) -> int:
@@ -186,8 +199,15 @@ def main() -> None:
     parser.add_argument("--measure-only", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    seeds = [int(s) for s in args.seeds_text.split(",")]
-    configs = _parse_configs(args.configs_text)
+    # 測り始める前に読んでおく（読めなければ、どの引数が悪いかを出して終了コード 2 で止まる）。
+    try:
+        seeds = _parse_seeds(args.seeds_text)
+    except ValueError as error:
+        parser.error(f"--seeds: {error}")
+    try:
+        configs = _parse_configs(args.configs_text)
+    except ValueError as error:
+        parser.error(f"--configs: {error}")
 
     if args.measure_only:
         root = args.root.resolve()

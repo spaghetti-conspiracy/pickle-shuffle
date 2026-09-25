@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -121,3 +123,33 @@ def test_installed_code_is_not_measured_in_place_of_the_other(tmp_path):
     """相手に app/ が無いと、インストール済みの自分側の app を黙って測りかねない。止める。"""
     with pytest.raises(SystemExit, match="計測に失敗"):
         bench._run_once(_dummy_checkout(tmp_path / "noapp", with_app=False), _args())
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--seeds", ""),
+        ("--seeds", "1,x"),
+        ("--configs", ""),
+        ("--configs", "8x2:1"),
+        ("--configs", "8"),
+        ("--configs", "0x2"),
+        ("--configs", "8x0"),
+        ("--configs", "8x2:-1:0"),
+    ],
+)
+def test_a_malformed_argument_stops_with_a_message(option, value):
+    """読めない引数は、トレースバックではなく、どの引数が悪いかの分かるエラーで止める。
+
+    PR #28 のレビューで、``--seeds ""`` や ``--configs 8x2:1`` が ValueError のトレースバックで
+    落ちると分かった。測り始める前に argparse のエラー（終了コード 2）で止める。
+    """
+    done = subprocess.run(
+        [sys.executable, str(_PATH), option, value],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 2
+    assert "Traceback" not in done.stderr
+    assert option in done.stderr

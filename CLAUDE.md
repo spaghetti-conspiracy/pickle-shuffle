@@ -20,7 +20,7 @@
 - 開発サーバ: `uv run uvicorn app.main:app --reload --port 8000`
 - テスト: `uv run pytest`（ブラウザテストは既定で外れている。走らせるときは `uv run pytest -m browser`。
   初めてのときは先に `uv run playwright install chromium`）
-- lint と整形: `uv run ruff check .` / `uv run ruff format .`
+- lint と整形: `uv run ruff check .` / `uv run ruff format .`（整形の確認だけなら `uv run ruff format --check .`。CI でも確かめている）
 - ロックの確認: `uv lock --check`（`pyproject.toml` を変えたら。CI でも確かめている）
 - コンテナ: `docker compose up --build`
 
@@ -179,7 +179,7 @@
 
 ## コーディング規約
 
-- Python: 型ヒント必須、公開関数に docstring（日本語可）、行長 100、ruff 準拠。
+- Python: 型ヒント必須、公開関数に docstring（日本語可）、行長 120、ruff 準拠（`ruff format` で整形する。CI でも確かめている）。
 - 用語は仕様書に合わせる。
   - `session` = 練習会
   - `round` = 1回の生成単位（全コート分）
@@ -195,7 +195,7 @@
   仕様の性質（公平性・初心者ペア回避・男女優先度・休憩クレジット）を検証する性質ベースのテストを書く。
 - 乱数は固定シードで再現性を担保する。
 - API は `TestClient` + インメモリ SQLite で検証する。
-- 完了報告の前に `uv run pytest` と `uv run ruff check .` を必ず通す。
+- 完了報告の前に `uv run pytest` と `uv run ruff check .`、`uv run ruff format --check .` を必ず通す。
 - **テストを弱めない。** 通すためにテストを変えるのではなく実装を直す（下の「テストを弱体化させない規則」）。
 
 ### バグを直す手順

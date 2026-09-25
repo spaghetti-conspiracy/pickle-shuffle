@@ -54,6 +54,10 @@ jobs:
       - name: lint
         run: uv run ruff check .
 
+      - name: 整形
+        # `ruff format` を当てたときと同じ形か。行長は pyproject.toml の設定（120）。
+        run: uv run ruff format --check .
+
       - name: テスト
         # DB は決め打ちにする。シェルに DATABASE_URL があると、conftest が
         # 上書きするとはいえ、取り違えに気づきにくい。

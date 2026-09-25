@@ -108,15 +108,18 @@ def round_levels(db: Session, session_id: int) -> dict[int, dict[int, Level]]:
     return levels
 
 
-def build_player_stats(db: Session, session_id: int) -> list[PlayerStat]:
-    """生成に渡す PlayerStat の一覧。離脱済みのメンバーは含めない。"""
-    members = list(
-        db.scalars(
-            select(Member)
-            .where(Member.session_id == session_id, Member.status != MemberStatus.LEFT)
-            .order_by(Member.id)
-        )
-    )
+def build_player_stats(
+    db: Session, session_id: int, *, include_left: bool = False
+) -> list[PlayerStat]:
+    """生成に渡す PlayerStat の一覧。離脱済みのメンバーは含めない。
+
+    ``include_left`` を真にすると離脱済みのメンバーも含める（離脱から戻る人の
+    出場回数とみなし出場を、他の人と同じ1回の集計で得るため）。
+    """
+    query = select(Member).where(Member.session_id == session_id)
+    if not include_left:
+        query = query.where(Member.status != MemberStatus.LEFT)
+    members = list(db.scalars(query.order_by(Member.id)))
     records = participation_records(db, session_id)
     rates = round_rates(records)
 

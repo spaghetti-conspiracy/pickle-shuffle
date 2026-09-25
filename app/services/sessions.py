@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections import Counter
 from dataclasses import dataclass
 
@@ -24,7 +23,7 @@ from app.models import (
     default_court_name,
     new_random_seed,
 )
-from app.scheduler.domain import Gender, Level, MemberStatus
+from app.scheduler.domain import Gender, Level, MemberStatus, round_half_up
 from app.services import people as people_service
 from app.services import stats
 from app.services.naming import unique_nickname
@@ -235,15 +234,15 @@ def add_member(
         # 二重に入ると、同じ人が別のコートの2試合に同時に割り当てられ得る。
         raise ValidationError(f"「{already.nickname}」はすでにこの練習会に入っています")
 
-    # 下駄は参加時点の active メンバーの最小 adjusted。これが無いと
+    # 下駄は参加時点の active メンバーの最小 adjusted（四捨五入した値）。これが無いと
     # 遅刻者が追いつくまで何ラウンドも連続出場してしまう。
     actives = [
         p
         for p in stats.build_player_stats(db, session.id)
         if p.status is MemberStatus.ACTIVE
     ]
-    # 整数部分の最小値（生成も整数部分で出場者を選ぶ）。下駄は整数のまま保存できる。
-    baseline = min((p.adjusted_whole for p in actives), default=0)
+    # 生成も四捨五入した値で出場者を選ぶ。下駄は整数のまま保存できる。
+    baseline = min((p.adjusted_rounded for p in actives), default=0)
 
     if already is not None:
         # 一度外した人が戻ってきた。**新しい行は作らず、離脱した行を戻す。**
@@ -257,8 +256,9 @@ def add_member(
         already.status = MemberStatus.ACTIVE
         db.flush()
         own = next(p for p in stats.build_player_stats(db, session.id) if p.id == already.id)
-        # みなし出場の端数は下駄に入れない。adjusted の整数部分がちょうど最小値になる。
-        already.baseline = baseline - own.plays - math.floor(own.rest_credit)
+        # みなし出場は同じ四捨五入で差し引く。adjusted_rounded がちょうど最小値になる
+        # （端数の残り d は [-0.5, 0.5) なので、四捨五入すると 0 になる）。
+        already.baseline = baseline - own.plays - round_half_up(own.rest_credit)
         already.joined_by_import = by_import
         if commit:
             db.commit()

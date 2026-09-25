@@ -39,8 +39,11 @@ SQLite で軽く動かしたいときは、`docker-compose.yml` の `web` の `D
 
 ### 開発
 
+uv が前提。開発用の依存は `pyproject.toml` の `[dependency-groups]` にあるので、
+`pip install -e ".[dev]"` では入らない。
+
 ```bash
-uv sync                                   # uv が前提（開発用の依存は pyproject.toml の [dependency-groups] にあり、pip install -e ".[dev]" では入らない）
+uv sync
 uv run uvicorn app.main:app --reload --port 8000   # DB 未指定なら ./data/app.db (SQLite)
 uv run pytest                             # テストはインメモリ SQLite
 uv run ruff check .
@@ -188,7 +191,7 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost/pickle
 ```bash
 docker compose exec db pg_dump -U pickle pickle > backup.sql   # 先にバックアップ
 docker compose stop web
-DATABASE_URL=... .venv/bin/python scripts/migrate_phase11.py   # --dry-run で下見できる
+DATABASE_URL=... uv run python scripts/migrate_phase11.py   # --dry-run で下見できる
 docker compose up -d
 ```
 

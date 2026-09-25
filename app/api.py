@@ -90,9 +90,7 @@ def require_admin(
     """
     admin_id = auth.read_cookie(pickle_admin)
     admin = owners_service.get_admin(db, admin_id) if admin_id is not None else None
-    if admin is None or not auth.cookie_matches(
-        pickle_admin or "", admin.id, admin.password_hash
-    ):
+    if admin is None or not auth.cookie_matches(pickle_admin or "", admin.id, admin.password_hash):
         raise UnauthorizedError("合言葉を入力してください")
     return owners_service.current_owner(db, admin)
 
@@ -178,12 +176,8 @@ def list_sessions(db: DbSession, owner: CurrentOwner) -> list[SessionOut]:
 
 
 @router.post("/sessions", response_model=SessionOut, status_code=201)
-def create_session(
-    payload: SessionCreate, db: DbSession, owner: CurrentOwner
-) -> SessionOut:
-    session = sessions_service.create_session(
-        db, owner, payload.name, payload.court_count
-    )
+def create_session(payload: SessionCreate, db: DbSession, owner: CurrentOwner) -> SessionOut:
+    session = sessions_service.create_session(db, owner, payload.name, payload.court_count)
     return _session_out(session)
 
 
@@ -193,9 +187,7 @@ def get_session(session_token: str, db: DbSession) -> SessionOut:
 
 
 @router.patch("/sessions/{session_token}", response_model=SessionOut)
-def update_session(
-    session_token: str, payload: SessionUpdate, db: DbSession
-) -> SessionOut:
+def update_session(session_token: str, payload: SessionUpdate, db: DbSession) -> SessionOut:
     session = sessions_service.get_session(db, session_token)
     sessions_service.update_session(
         db,
@@ -222,9 +214,7 @@ def update_court(
 ) -> CourtOut:
     """コート名の変更と、試合用から外す/戻す。"""
     session = sessions_service.get_session(db, session_token)
-    court = sessions_service.update_court(
-        db, session, court_id, name=payload.name, in_use=payload.in_use
-    )
+    court = sessions_service.update_court(db, session, court_id, name=payload.name, in_use=payload.in_use)
     return CourtOut.model_validate(court)
 
 
@@ -249,15 +239,11 @@ def _member_out(member: Member, plays: dict[int, int]) -> MemberOut:
 def list_members(session_token: str, db: DbSession) -> list[MemberOut]:
     session = sessions_service.get_session(db, session_token)
     plays = stats_service.play_counts(db, session.id)
-    return [
-        _member_out(m, plays) for m in sessions_service.list_members(db, session.id)
-    ]
+    return [_member_out(m, plays) for m in sessions_service.list_members(db, session.id)]
 
 
 @router.post("/sessions/{session_token}/members", response_model=MemberOut, status_code=201)
-def add_member(
-    session_token: str, payload: MemberCreate, db: DbSession
-) -> MemberOut:
+def add_member(session_token: str, payload: MemberCreate, db: DbSession) -> MemberOut:
     """参加者を足す。台帳から選ぶか、その場で登録するか。
 
     その場で登録した人は台帳にも入る。打ち込んだ名前が台帳の誰かと同じでも、
@@ -279,12 +265,8 @@ def add_member(
     return _member_out(member, {})
 
 
-@router.post(
-    "/sessions/{session_token}/members/import", response_model=ImportResultOut
-)
-def import_members(
-    session_token: str, payload: ImportRequest, db: DbSession
-) -> ImportResultOut:
+@router.post("/sessions/{session_token}/members/import", response_model=ImportResultOut)
+def import_members(session_token: str, payload: ImportRequest, db: DbSession) -> ImportResultOut:
     """tennisbear のイベントから参加者を取り込む。
 
     何度でも実行してよい。すでに台帳にいる人は ID で見分けて、**何も書き換えない**。
@@ -294,18 +276,14 @@ def import_members(
     owner = sessions_service.owner_of(db, session)
     # 取りに行く前に弾く。別のイベントだと分かっているのに外へ出ても無駄で、
     # そのIDが実在しなければ「見つかりません」が先に返って理由がぼやける。
-    sessions_service.check_event(
-        session, external_key(SOURCE_TENNISBEAR, payload.event_id)
-    )
+    sessions_service.check_event(session, external_key(SOURCE_TENNISBEAR, payload.event_id))
     html = tennisbear.fetch_event_page(
         payload.event_id,
         base_url=settings.tennisbear_base_url,
         timeout=settings.tennisbear_timeout,
     )
     participants = tennisbear.parse_event_page(html)
-    result = sessions_service.import_participants(
-        db, owner, session, participants, event_id=payload.event_id
-    )
+    result = sessions_service.import_participants(db, owner, session, participants, event_id=payload.event_id)
     return ImportResultOut(
         added=result.added,
         unchanged=result.unchanged,
@@ -344,9 +322,7 @@ def control_timer(
 
 
 @router.patch("/members/{member_id}", response_model=MemberOut)
-def update_member(
-    member_id: int, payload: MemberUpdate, db: DbSession, owner: CurrentOwner
-) -> MemberOut:
+def update_member(member_id: int, payload: MemberUpdate, db: DbSession, owner: CurrentOwner) -> MemberOut:
     member = sessions_service.get_member(db, member_id, owner)
     sessions_service.update_member(
         db,
@@ -408,9 +384,7 @@ def list_people(db: DbSession, owner: CurrentOwner) -> list[PersonOut]:
 
 
 @router.post("/people", response_model=PersonOut, status_code=201)
-def add_person(
-    payload: PersonCreate, db: DbSession, owner: CurrentOwner
-) -> PersonOut:
+def add_person(payload: PersonCreate, db: DbSession, owner: CurrentOwner) -> PersonOut:
     person = people_service.add_person(
         db,
         owner,
@@ -422,9 +396,7 @@ def add_person(
 
 
 @router.patch("/people/{person_id}", response_model=PersonOut)
-def update_person(
-    person_id: int, payload: PersonUpdate, db: DbSession, owner: CurrentOwner
-) -> PersonOut:
+def update_person(person_id: int, payload: PersonUpdate, db: DbSession, owner: CurrentOwner) -> PersonOut:
     """台帳を直す。その人が入っている練習会の参加者にも反映される。"""
     person = people_service.get_person(db, owner, person_id)
     people_service.update_person(
@@ -469,9 +441,7 @@ def _as_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
-def _stale_member_ids(
-    members: dict[int, Member], playing: set[int], round_: Round | None
-) -> list[int]:
+def _stale_member_ids(members: dict[int, Member], playing: set[int], round_: Round | None) -> list[int]:
     """表示中のマッチと食い違っているメンバー。
 
     休憩・離脱に加えて、生成より後に属性（レベルなど）を変えた人も含める。
@@ -540,9 +510,7 @@ def _revision_of(payload: CurrentOut) -> str:
     return hashlib.blake2b(body.encode("utf-8"), digest_size=8).hexdigest()
 
 
-def _build_current(
-    db: Session, session: PracticeSession, request: Request | None = None
-) -> CurrentOut:
+def _build_current(db: Session, session: PracticeSession, request: Request | None = None) -> CurrentOut:
     members = {m.id: m for m in sessions_service.list_members(db, session.id)}
     round_ = rounds_service.current_round(db, session.id)
 
@@ -555,19 +523,11 @@ def _build_current(
                 member = members.get(slot.member_id)
                 if member is None:
                     continue
-                teams[slot.team_index].append(
-                    _player_out(
-                        member, unavailable=member.status is not MemberStatus.ACTIVE
-                    )
-                )
+                teams[slot.team_index].append(_player_out(member, unavailable=member.status is not MemberStatus.ACTIVE))
                 playing.add(member.id)
             match_by_court[match.court_id] = MatchOut(team_a=teams[0], team_b=teams[1])
 
-    waiting_count = sum(
-        1
-        for m in members.values()
-        if m.status is MemberStatus.ACTIVE and m.id not in playing
-    )
+    waiting_count = sum(1 for m in members.values() if m.status is MemberStatus.ACTIVE and m.id not in playing)
 
     court_states = []
     for court in session.courts:
@@ -596,14 +556,8 @@ def _build_current(
             )
         )
 
-    waiting = [
-        _player_out(m)
-        for m in members.values()
-        if m.status is MemberStatus.ACTIVE and m.id not in playing
-    ]
-    resting = [
-        _player_out(m) for m in members.values() if m.status is MemberStatus.RESTING
-    ]
+    waiting = [_player_out(m) for m in members.values() if m.status is MemberStatus.ACTIVE and m.id not in playing]
+    resting = [_player_out(m) for m in members.values() if m.status is MemberStatus.RESTING]
     stale_ids = _stale_member_ids(members, playing, round_)
     stale = [members[i].nickname for i in stale_ids]
 

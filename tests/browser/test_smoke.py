@@ -41,9 +41,7 @@ def _row_with(page, nickname: str):
 
 
 def _nicknames(page) -> list[str]:
-    return page.eval_on_selector_all(
-        "#people-body tr td:first-child input", "els => els.map(e => e.value)"
-    )
+    return page.eval_on_selector_all("#people-body tr td:first-child input", "els => els.map(e => e.value)")
 
 
 def _make_session(page, server, name: str) -> str:
@@ -62,9 +60,7 @@ def test_the_password_guards_the_top_screen(page):
 
     page.fill("#password", "ちがう")
     page.click("#unlock")
-    page.wait_for_function(
-        "() => document.getElementById('gate-error').textContent", timeout=10000
-    )
+    page.wait_for_function("() => document.getElementById('gate-error').textContent", timeout=10000)
 
     _unlock(page)
     assert page.locator("#main").is_visible()
@@ -114,15 +110,11 @@ def test_a_participant_is_added_and_removed(page, server):
 
     page.fill("#new-nickname", nickname)
     page.click("#add-member")
-    page.wait_for_function(
-        "() => document.querySelectorAll('#members-body tr').length === 1", timeout=10000
-    )
+    page.wait_for_function("() => document.querySelectorAll('#members-body tr').length === 1", timeout=10000)
 
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#members-body tr").first.locator("button.danger").click()
-    page.wait_for_function(
-        "() => document.querySelectorAll('#members-body tr').length === 0", timeout=10000
-    )
+    page.wait_for_function("() => document.querySelectorAll('#members-body tr').length === 0", timeout=10000)
 
     page.goto(f"{server}/members.html", wait_until="networkidle")
     page.wait_for_selector("body[data-ready]", timeout=15000)
@@ -146,9 +138,7 @@ def test_a_match_is_generated_and_started(page, server, watch):
     page.goto(f"{server}/overview.html?session={token}", wait_until="networkidle")
     page.wait_for_selector("body[data-ready]", timeout=15000)
     page.click("#next")
-    page.wait_for_function(
-        "() => document.querySelectorAll('.court .player').length >= 8", timeout=15000
-    )
+    page.wait_for_function("() => document.querySelectorAll('.court .player').length >= 8", timeout=15000)
     page.click("#start")
     # 開始したら「次のマッチ」は引っ込む（読み上げ中に組み合わせが変わらないように）。
     page.wait_for_function(
@@ -163,9 +153,7 @@ def test_a_match_is_generated_and_started(page, server, watch):
         member.goto(f"{server}/member.html?session={token}", wait_until="networkidle")
         member.wait_for_selector("body[data-ready]", timeout=15000)
         assert "合言葉" not in member.inner_text("body")
-        member.wait_for_function(
-            "() => document.querySelectorAll('.player').length >= 4", timeout=15000
-        )
+        member.wait_for_function("() => document.querySelectorAll('.player').length >= 4", timeout=15000)
     finally:
         guest.close()
 

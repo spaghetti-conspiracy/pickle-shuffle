@@ -118,9 +118,7 @@ def make_rng(seed: int, round_seq: int, attempt: int) -> random.Random:
     同じ練習会・同じ位置・同じ試行回数なら必ず同じ結果になる（不変則11）。
     ``attempt`` はスキップした回数なので、スキップのたびに別の抽選になる。
     """
-    digest = hashlib.blake2b(
-        struct.pack("<qqq", seed, round_seq, attempt), digest_size=16
-    ).digest()
+    digest = hashlib.blake2b(struct.pack("<qqq", seed, round_seq, attempt), digest_size=16).digest()
     return random.Random(int.from_bytes(digest, "little"))
 
 
@@ -222,9 +220,7 @@ class _State:
                 first, second = team
                 if (first in beginners) != (second in beginners):
                     non_beginner = second if first in beginners else first
-                    self.beginner_partner[non_beginner] = (
-                        self.beginner_partner.get(non_beginner, 0) + 1
-                    )
+                    self.beginner_partner[non_beginner] = self.beginner_partner.get(non_beginner, 0) + 1
             for x in pair_a:
                 for y in pair_b:
                     key = pair_key(x, y)
@@ -247,9 +243,7 @@ class _State:
 # ---------------------------------------------------------------------------
 
 
-def player_costs(
-    active: Sequence[PlayerStat], state: _State, weights: Weights
-) -> dict[int, int]:
+def player_costs(active: Sequence[PlayerStat], state: _State, weights: Weights) -> dict[int, int]:
     """その人を出場させることの得失。小さいほど出したい。
 
     仕様の優先度2（参加回数の公平）・3（連続不参加を短く）・7（休み明けを優先）は、
@@ -273,9 +267,7 @@ def player_costs(
     return costs
 
 
-def benched_baseline(
-    active: Sequence[PlayerStat], state: _State, weights: Weights
-) -> int:
+def benched_baseline(active: Sequence[PlayerStat], state: _State, weights: Weights) -> int:
     """:func:`player_costs` で符号を反転した分の定数。
 
     「非出場者への減点」の合計は、出場者と非出場者の両方を足した値から
@@ -325,9 +317,7 @@ class _Scorer:
         partner = state.partner
         self._has_fresh_partner: dict[int, bool] = {
             a.id: any(
-                b.id != a.id
-                and partner.get(pair_key(a.id, b.id), 0) == 0
-                and (a.knows_rules or b.knows_rules)
+                b.id != a.id and partner.get(pair_key(a.id, b.id), 0) == 0 and (a.knows_rules or b.knows_rules)
                 for b in players
             )
             for a in players
@@ -376,9 +366,7 @@ class _Scorer:
         # 優先度4: 初心者と組む回数を、初心者以外の間で均等にする。
         if a.is_beginner != b.is_beginner:
             non_beginner = b.id if a.is_beginner else a.id
-            cost += w.beginner_spread * (
-                2 * self._state.beginner_partner.get(non_beginner, 0) + 1
-            )
+            cost += w.beginner_spread * (2 * self._state.beginner_partner.get(non_beginner, 0) + 1)
         return cost
 
     def match_cost(self, pair_a: Pair, pair_b: Pair) -> int:
@@ -391,11 +379,7 @@ class _Scorer:
         w = self._weights
         # 優先度1: 同じ相手とばかり対戦しないようにする。
         opponent = self._state.opponent
-        cost = sum(
-            w.opponent * (2 * opponent.get(pair_key(x, y), 0) + 1)
-            for x in pair_a
-            for y in pair_b
-        )
+        cost = sum(w.opponent * (2 * opponent.get(pair_key(x, y), 0) + 1) for x in pair_a for y in pair_b)
         # 優先度5a: 対等なペア同士のマッチがよい。左右の強さの差に比例して減点する。
         cost += w.strength_gap * abs(self.pair_strength[pair_a] - self.pair_strength[pair_b])
         # 優先度6: 男女ペア同士のマッチが望ましい。
@@ -417,9 +401,7 @@ class _Scorer:
         w = self._weights
         members = set(group)
         cost = w.same_group * self._state.group.get(tuple(sorted(group)), 0)  # type: ignore[arg-type]
-        if w.recent_trio and any(
-            len(members.intersection(last)) >= 3 for last in self._state.last_groups
-        ):
+        if w.recent_trio and any(len(members.intersection(last)) >= 3 for last in self._state.last_groups):
             cost += w.recent_trio
         return cost
 
@@ -483,9 +465,7 @@ def _split_candidates(
     ordered = sorted(active, key=lambda p: state.adjusted[p.id])
     threshold = state.adjusted[ordered[n_slots - 1].id]
     must = [p for p in active if state.adjusted[p.id] < threshold]
-    flexible = [
-        p for p in active if threshold <= state.adjusted[p.id] <= threshold + fairness_slack
-    ]
+    flexible = [p for p in active if threshold <= state.adjusted[p.id] <= threshold + fairness_slack]
     return must, flexible, math.comb(len(flexible), n_slots - len(must))
 
 
@@ -672,9 +652,7 @@ def _plan_round(
         rng=rng,
     )
 
-    scorer = _Scorer(
-        active, state, weights, rng=rng, avoid_matches=avoid_matches, tie_salt=tie_salt
-    )
+    scorer = _Scorer(active, state, weights, rng=rng, avoid_matches=avoid_matches, tie_salt=tie_salt)
     costs = player_costs(active, state, weights)
     baseline = benched_baseline(active, state, weights)
 
@@ -693,9 +671,7 @@ def _plan_round(
     for selected in candidate_sets:
         ids = tuple(sorted((p.id for p in selected), key=lambda i: (rank[i], i)))
         base = baseline + sum(costs[member_id] for member_id in ids)
-        for cost, batch in split_into_matches(
-            ids, n_matches, scorer, beam_width=batch_beam
-        ):
+        for cost, batch in split_into_matches(ids, n_matches, scorer, beam_width=batch_beam):
             score = base + cost
             if avoid_rounds and _round_signature(batch, scorer) in avoid_rounds:
                 score += weights.avoid_round
@@ -849,9 +825,7 @@ def generate_round(
         raise NotEnoughPlayersError("試合に使えるコートがありません")
     n_matches = min(court_count, len(active) // PLAYERS_PER_MATCH)
     if n_matches < 1:
-        raise NotEnoughPlayersError(
-            f"マッチを組むには4人以上必要です（出場可能なメンバーは{len(active)}人）"
-        )
+        raise NotEnoughPlayersError(f"マッチを組むには4人以上必要です（出場可能なメンバーは{len(active)}人）")
 
     # コート数が増えると1ラウンドの組み分けが一気に増えるので、
     # 探索の幅を絞って所要時間を抑える。よく使う2面までは絞らない。

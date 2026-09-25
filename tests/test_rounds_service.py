@@ -69,9 +69,7 @@ def test_undo_restores_everything(db):
     rounds_service.undo(db, second)
 
     assert stats_service.play_counts(db, session.id) == before
-    assert stats_service.build_history(db, session.id).partner_count == (
-        history_before.partner_count
-    )
+    assert stats_service.build_history(db, session.id).partner_count == (history_before.partner_count)
 
 
 def _groups_of(round_) -> list[tuple[int, ...]]:
@@ -153,9 +151,7 @@ def test_member_changes_do_not_touch_the_pending_round(db):
     before = rounds_service._signature(round_)
 
     playing = next(iter({s.member_id for m in round_.matches for s in m.slots}))
-    sessions_service.update_member(
-        db, sessions_service.get_member(db, playing), status=MemberStatus.RESTING
-    )
+    sessions_service.update_member(db, sessions_service.get_member(db, playing), status=MemberStatus.RESTING)
 
     db.refresh(round_)
     assert rounds_service._signature(round_) == before
@@ -170,9 +166,7 @@ def test_a_late_joiner_gets_a_baseline(db):
         rounds_service.adopt(db, rounds_service.generate(db, session))
 
     established = min(
-        p.adjusted
-        for p in stats_service.build_player_stats(db, session.id)
-        if p.status is MemberStatus.ACTIVE
+        p.adjusted for p in stats_service.build_player_stats(db, session.id) if p.status is MemberStatus.ACTIVE
     )
     late = sessions_service.add_member(
         db,
@@ -252,9 +246,7 @@ def test_members_moved_to_the_practice_court_are_treated_as_resting(db):
     assert not playing & {coach.id, trainee.id}
 
     rounds_service.adopt(db, round_)
-    stat = next(
-        p for p in stats_service.build_player_stats(db, session.id) if p.id == coach.id
-    )
+    stat = next(p for p in stats_service.build_player_stats(db, session.id) if p.id == coach.id)
     assert stat.plays == 0
 
 
@@ -343,26 +335,20 @@ def test_a_level_change_takes_effect_from_the_next_generation(db):
     db.refresh(session)
 
     round_ = rounds_service.generate(db, session)
-    assert _partner_of(round_, members[0].id) != members[1].id, (
-        "初心者にしたらすぐ、初心者同士のペアが避けられる"
-    )
+    assert _partner_of(round_, members[0].id) != members[1].id, "初心者にしたらすぐ、初心者同士のペアが避けられる"
 
 
 def test_a_level_change_does_not_move_the_displayed_match(db):
     """表示中のマッチは、レベルを変えても動かない（不変則12）。"""
     session, members = _beginner_session(db, beginners=0)
     round_ = rounds_service.generate(db, session)
-    before = [
-        (s.match_id, s.team_index, s.member_id) for m in round_.matches for s in m.slots
-    ]
+    before = [(s.match_id, s.team_index, s.member_id) for m in round_.matches for s in m.slots]
 
     for member in members[:2]:
         sessions_service.update_member(db, member, level=Level.BEGINNER)
 
     db.refresh(round_)
-    after = [
-        (s.match_id, s.team_index, s.member_id) for m in round_.matches for s in m.slots
-    ]
+    after = [(s.match_id, s.team_index, s.member_id) for m in round_.matches for s in m.slots]
     assert after == before
 
 

@@ -20,9 +20,7 @@ NOW = 100 * HOUR
 """判定の「いま」。作成時刻はこれより前にする。"""
 
 
-def deployment(
-    uid: str, created: int, state: str | None = "READY", target: str | None = None
-) -> dict:
+def deployment(uid: str, created: int, state: str | None = "READY", target: str | None = None) -> dict:
     return {
         "uid": uid,
         "created": created,
@@ -51,9 +49,7 @@ def test_what_an_external_url_points_to_is_kept_even_if_it_is_old():
         deployment("old-prod", NOW - 5 * HOUR, target="production"),  # 本番の URL が指す
         deployment("older-prod", NOW - 9 * HOUR, target="production"),
     ]
-    keep, doomed = prune.choose(
-        deployments, [alias("pickle-shuffle.vercel.app", "old-prod")], now_ms=NOW
-    )
+    keep, doomed = prune.choose(deployments, [alias("pickle-shuffle.vercel.app", "old-prod")], now_ms=NOW)
     assert keep["old-prod"] == ["pickle-shuffle.vercel.app"]
     assert [d["uid"] for d in doomed] == ["older-prod"]
 
@@ -85,16 +81,12 @@ def test_the_latest_staging_survives_without_a_staging_domain():
         deployment("stg-latest", NOW - 2 * HOUR),
         deployment("stg-old", NOW - 5 * HOUR),
     ]
-    keep, doomed = prune.choose(
-        deployments, [alias("pickle-shuffle.vercel.app", "prod")], now_ms=NOW
-    )
+    keep, doomed = prune.choose(deployments, [alias("pickle-shuffle.vercel.app", "prod")], now_ms=NOW)
     assert keep["stg-latest"] == ["preview の最新"]
     assert [d["uid"] for d in doomed] == ["stg-old"]
 
 
-@pytest.mark.parametrize(
-    "state", ["QUEUED", "INITIALIZING", "BUILDING", "BLOCKED", "SOMETHING_NEW", None]
-)
+@pytest.mark.parametrize("state", ["QUEUED", "INITIALIZING", "BUILDING", "BLOCKED", "SOMETHING_NEW", None])
 def test_only_finished_deployments_are_removed(state):
     """消してよいのは READY / ERROR / CANCELED だけ。
 
@@ -104,9 +96,7 @@ def test_only_finished_deployments_are_removed(state):
         deployment("prod", NOW - 1 * HOUR, target="production"),
         deployment("odd", NOW - 5 * HOUR, state=state),
     ]
-    keep, doomed = prune.choose(
-        deployments, [alias("pickle-shuffle.vercel.app", "prod")], now_ms=NOW
-    )
+    keep, doomed = prune.choose(deployments, [alias("pickle-shuffle.vercel.app", "prod")], now_ms=NOW)
     assert "odd" in keep
     assert doomed == []
 
@@ -117,9 +107,7 @@ def test_an_already_deleted_deployment_is_left_alone():
         deployment("prod", NOW - 1 * HOUR, target="production"),
         deployment("gone", NOW - 5 * HOUR, state="DELETED"),
     ]
-    keep, doomed = prune.choose(
-        deployments, [alias("pickle-shuffle.vercel.app", "prod")], now_ms=NOW
-    )
+    keep, doomed = prune.choose(deployments, [alias("pickle-shuffle.vercel.app", "prod")], now_ms=NOW)
     assert "gone" not in keep
     assert doomed == []
 
@@ -131,9 +119,7 @@ def test_a_brand_new_deployment_is_kept():
         deployment("stg", NOW - 3 * HOUR),
         deployment("stg-old", NOW - 5 * HOUR),
     ]
-    keep, doomed = prune.choose(
-        deployments, [alias("pickle-shuffle-staging.vercel.app", "stg")], now_ms=NOW
-    )
+    keep, doomed = prune.choose(deployments, [alias("pickle-shuffle-staging.vercel.app", "stg")], now_ms=NOW)
     assert "作成から10分以内" in keep["stg-new"]
     assert [d["uid"] for d in doomed] == ["stg-old"]
 

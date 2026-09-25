@@ -100,11 +100,7 @@ def generate(
     if not available:
         raise NotEnoughPlayersError("試合に使えるコートがありません")
 
-    for pending in db.scalars(
-        select(Round).where(
-            Round.session_id == session.id, Round.status == RoundStatus.PENDING
-        )
-    ):
+    for pending in db.scalars(select(Round).where(Round.session_id == session.id, Round.status == RoundStatus.PENDING)):
         pending.status = RoundStatus.REJECTED
         pending.decided_at = utcnow()
     db.flush()
@@ -138,9 +134,7 @@ def generate(
         db.flush()
         for team_index, team in enumerate((match_plan.team_a, match_plan.team_b)):
             for member_id in team:
-                db.add(
-                    MatchSlot(match_id=match.id, team_index=team_index, member_id=member_id)
-                )
+                db.add(MatchSlot(match_id=match.id, team_index=team_index, member_id=member_id))
 
     db.commit()
     db.refresh(round_)
@@ -155,9 +149,7 @@ def _claim(db: Session, round_: Round, expected: RoundStatus, new: RoundStatus) 
     使われる前提なので、WHERE で今の状態を縛り、更新できた行数で判定する。
     """
     result = db.execute(
-        update(Round)
-        .where(Round.id == round_.id, Round.status == expected)
-        .values(status=new, decided_at=utcnow())
+        update(Round).where(Round.id == round_.id, Round.status == expected).values(status=new, decided_at=utcnow())
     )
     return result.rowcount == 1
 
@@ -253,9 +245,7 @@ def undo(db: Session, round_: Round) -> None:
     ).first()
     if latest is None or latest.id != round_.id:
         raise ConflictError("取り消せるのは最後に開始したマッチだけです")
-    result = db.execute(
-        delete(Round).where(Round.id == round_.id, Round.status == RoundStatus.ADOPTED)
-    )
+    result = db.execute(delete(Round).where(Round.id == round_.id, Round.status == RoundStatus.ADOPTED))
     if result.rowcount != 1:
         db.rollback()
         raise ConflictError("このマッチはすでに取り消されています")
@@ -291,6 +281,7 @@ def get_round(db: Session, round_id: int, owner_id: int | None = None) -> Round:
 # 持ち時間の設定を変えても、その場で正しい残り時間になる。
 # ---------------------------------------------------------------------------
 
+
 def _reset_timer(round_: Round) -> None:
     """時計を動かし始める状態にする。採用のたびに仕切り直す。
 
@@ -302,18 +293,14 @@ def _reset_timer(round_: Round) -> None:
     round_.timer_alarm_silenced = False
 
 
-def _claim_timer(
-    db: Session, round_: Round, expected: TimerState, new: TimerState, **values: object
-) -> bool:
+def _claim_timer(db: Session, round_: Round, expected: TimerState, new: TimerState, **values: object) -> bool:
     """時計の状態を条件付きで書き換え、自分が遷移させたかを返す。
 
     在メモリの値を見てから書くと、別の端末が先に操作していても素通りする。
     「中断」が 200 を返したのに一時停止のまま、といったことが起きる。
     """
     result = db.execute(
-        update(Round)
-        .where(Round.id == round_.id, Round.timer_state == expected)
-        .values(timer_state=new, **values)
+        update(Round).where(Round.id == round_.id, Round.timer_state == expected).values(timer_state=new, **values)
     )
     return result.rowcount == 1
 

@@ -15,17 +15,12 @@ from app.services.owners import current_owner
 
 
 def _person(db, owner, nickname, level=Level.PICKLEBALL, gender=Gender.MALE):
-    return people_service.add_person(
-        db, owner, nickname=nickname, gender=gender, level=level
-    )
+    return people_service.add_person(db, owner, nickname=nickname, gender=gender, level=level)
 
 
 def _session_with(db, owner, count=8, name="練習会"):
     session = sessions_service.create_session(db, owner, name, 2)
-    members = [
-        sessions_service.add_member(db, session, _person(db, owner, f"m{i + 1}"))
-        for i in range(count)
-    ]
+    members = [sessions_service.add_member(db, session, _person(db, owner, f"m{i + 1}")) for i in range(count)]
     return session, members
 
 
@@ -226,11 +221,19 @@ def test_another_owner_keeps_its_own_register(db, owner):
     db.commit()
 
     people_service.add_person(
-        db, owner, nickname="同じ人", gender=Gender.MALE, level=Level.PICKLEBALL,
+        db,
+        owner,
+        nickname="同じ人",
+        gender=Gender.MALE,
+        level=Level.PICKLEBALL,
         external_id="bear:9001",
     )
     people_service.add_person(
-        db, other, nickname="同じ人", gender=Gender.MALE, level=Level.PICKLEBALL,
+        db,
+        other,
+        nickname="同じ人",
+        gender=Gender.MALE,
+        level=Level.PICKLEBALL,
         external_id="bear:9001",
     )
 
@@ -256,9 +259,7 @@ def test_a_person_of_another_owner_is_not_reachable(db, owner):
     other = Owner(name="よその団体")
     db.add(other)
     db.commit()
-    person = people_service.add_person(
-        db, other, nickname="よその人", gender=Gender.MALE, level=Level.PICKLEBALL
-    )
+    person = people_service.add_person(db, other, nickname="よその人", gender=Gender.MALE, level=Level.PICKLEBALL)
 
     with pytest.raises(NotFoundError):
         people_service.get_person(db, owner, person.id)
@@ -276,9 +277,7 @@ def test_two_admins_share_one_owner(db, owner):
 
     _person(db, owner, "共有の人")
     assert current_owner(db, second).id == owner.id
-    assert [p.nickname for p in people_service.list_people(db, current_owner(db, second))] == [
-        "共有の人"
-    ]
+    assert [p.nickname for p in people_service.list_people(db, current_owner(db, second))] == ["共有の人"]
 
 
 def test_the_session_count_helps_before_deleting(db, owner):
@@ -302,9 +301,9 @@ def test_statistics_are_not_shared_through_the_register(db, owner):
         sessions_service.add_member(db, second, db.get(Person, member.person_id))
 
     assert stats_service.play_counts(db, second.id) == {}
-    assert all(
-        m.baseline == 0 for m in sessions_service.list_members(db, second.id)
-    ), "前の練習会の負担を持ち込んでいる"
+    assert all(m.baseline == 0 for m in sessions_service.list_members(db, second.id)), (
+        "前の練習会の負担を持ち込んでいる"
+    )
 
 
 def test_a_member_row_survives_its_person(db, owner):

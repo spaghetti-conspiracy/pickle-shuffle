@@ -89,9 +89,7 @@ def migrate(dry_run: bool = False) -> None:
         if "tennisbear_event_id" in _columns("practice_sessions"):
             for session in db.scalars(select(PracticeSession)):
                 old = db.execute(
-                    text(
-                        "SELECT tennisbear_event_id FROM practice_sessions WHERE id = :id"
-                    ),
+                    text("SELECT tennisbear_event_id FROM practice_sessions WHERE id = :id"),
                     {"id": session.id},
                 ).scalar()
                 if old is not None and session.external_event_id is None:
@@ -100,11 +98,7 @@ def migrate(dry_run: bool = False) -> None:
         print("5) 台帳を作る")
         moved = 0
         if "member_profiles" in inspect(engine).get_table_names():
-            rows = db.execute(
-                text(
-                    "SELECT nickname, gender, level, tennisbear_user_id FROM member_profiles"
-                )
-            ).all()
+            rows = db.execute(text("SELECT nickname, gender, level, tennisbear_user_id FROM member_profiles")).all()
             for nickname, gender, level, user_id in rows:
                 key = external_key(SOURCE_TENNISBEAR, user_id) if user_id else None
                 db.add(
@@ -139,9 +133,7 @@ def migrate(dry_run: bool = False) -> None:
                     {"id": member.id},
                 ).scalar()
                 if user_id:
-                    person = by_external.get(
-                        external_key(SOURCE_TENNISBEAR, user_id)
-                    )
+                    person = by_external.get(external_key(SOURCE_TENNISBEAR, user_id))
             if person is None:
                 person = by_name.get(member.nickname)
             if person is None:

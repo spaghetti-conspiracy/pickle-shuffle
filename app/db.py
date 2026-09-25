@@ -54,9 +54,7 @@ def _engine_kwargs(url: str) -> dict:
     # サーバーレスではファイルシステムが読み取り専用なので、失敗しても止めない。
     if parsed.database and parsed.database != ":memory:":
         with contextlib.suppress(OSError):
-            Path(parsed.database).expanduser().resolve().parent.mkdir(
-                parents=True, exist_ok=True
-            )
+            Path(parsed.database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
     # uvicorn のワーカースレッドから触るため。
     return {"connect_args": {"check_same_thread": False}}
@@ -82,6 +80,8 @@ if engine.dialect.name == "sqlite":
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
+
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
 
 

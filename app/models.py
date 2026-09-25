@@ -117,14 +117,10 @@ class PracticeSession(Base):
     """
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    owner_id: Mapped[int] = mapped_column(
-        ForeignKey("owners.id", ondelete="CASCADE"), index=True
-    )
+    owner_id: Mapped[int] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
     """この練習会を持つ団体。統計も台帳もここから外へは出ない。"""
 
-    token: Mapped[str] = mapped_column(
-        String(TOKEN_LENGTH), unique=True, index=True, default=new_session_token
-    )
+    token: Mapped[str] = mapped_column(String(TOKEN_LENGTH), unique=True, index=True, default=new_session_token)
     """URL と API で使う識別子。連番の id は外に出さない。"""
 
     name: Mapped[str] = mapped_column(String(100))
@@ -132,9 +128,7 @@ class PracticeSession(Base):
     highlight_beginners: Mapped[bool] = mapped_column(Boolean, default=False)
     """表示画面で初心者の名前を緑にするか。アルゴリズムの確認用で、ふだんは off。"""
 
-    external_event_id: Mapped[str | None] = mapped_column(
-        String(EXTERNAL_ID_MAX), default=None
-    )
+    external_event_id: Mapped[str | None] = mapped_column(String(EXTERNAL_ID_MAX), default=None)
     """参加者を取り込んだイベント（``bear:1614380``）。一度取り込んだら以後は固定。
 
     別のイベントを取り込むと、居ない人が一斉に休憩へ回る。取り違えたときに
@@ -183,9 +177,7 @@ class Court(Base):
     __table_args__ = (UniqueConstraint("session_id", "court_index", name="uq_court_index"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    session_id: Mapped[int] = mapped_column(
-        ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True
-    )
+    session_id: Mapped[int] = mapped_column(ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True)
     court_index: Mapped[int] = mapped_column(Integer)
     """0 起点の並び順。表示の並びもこの順。"""
 
@@ -204,9 +196,7 @@ class Member(Base):
     """
 
     __tablename__ = "members"
-    __table_args__ = (
-        UniqueConstraint("session_id", "person_id", name="uq_member_person"),
-    )
+    __table_args__ = (UniqueConstraint("session_id", "person_id", name="uq_member_person"),)
     """同じ人を1つの練習会に二重登録させない。
 
     二重に入ると、同じ人が別のコートの2試合に同時に割り当てられ得る。
@@ -215,15 +205,11 @@ class Member(Base):
     """
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    session_id: Mapped[int] = mapped_column(
-        ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True
-    )
+    session_id: Mapped[int] = mapped_column(ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True)
     nickname: Mapped[str] = mapped_column(String(50))
     gender: Mapped[Gender] = mapped_column(_enum_column(Gender))
     level: Mapped[Level] = mapped_column(_enum_column(Level))
-    status: Mapped[MemberStatus] = mapped_column(
-        _enum_column(MemberStatus), default=MemberStatus.ACTIVE
-    )
+    status: Mapped[MemberStatus] = mapped_column(_enum_column(MemberStatus), default=MemberStatus.ACTIVE)
     person_id: Mapped[int | None] = mapped_column(
         ForeignKey("people.id", ondelete="SET NULL"), default=None, index=True
     )
@@ -250,9 +236,7 @@ class Member(Base):
     """
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     """最後に属性や状態を変えた時刻。
 
     生成済みのマッチより後に変わったかどうかを見て、表示画面で注意を出すのに使う。
@@ -267,9 +251,7 @@ class Round(Base):
     __tablename__ = "rounds"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    session_id: Mapped[int] = mapped_column(
-        ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True
-    )
+    session_id: Mapped[int] = mapped_column(ForeignKey("practice_sessions.id", ondelete="CASCADE"), index=True)
     __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_round_seq"),)
     """採用の通し番号は練習会の中で一意にする。
 
@@ -281,21 +263,15 @@ class Round(Base):
     seq: Mapped[int | None] = mapped_column(Integer, default=None)
     """採用時にのみ採番する 1 起点の通し番号。pending / rejected では None。"""
 
-    status: Mapped[RoundStatus] = mapped_column(
-        _enum_column(RoundStatus), default=RoundStatus.PENDING
-    )
+    status: Mapped[RoundStatus] = mapped_column(_enum_column(RoundStatus), default=RoundStatus.PENDING)
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     """同じ位置で何回生成し直したか。乱数の導出と再生成の差別化に使う。"""
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
-    timer_state: Mapped[TimerState] = mapped_column(
-        _enum_column(TimerState), default=TimerState.STOPPED
-    )
-    timer_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    timer_state: Mapped[TimerState] = mapped_column(_enum_column(TimerState), default=TimerState.STOPPED)
+    timer_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     """動き出した時刻。止まっているときは None。"""
 
     timer_alarm_silenced: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -403,27 +379,21 @@ class Person(Base):
     """
 
     __tablename__ = "people"
-    __table_args__ = (
-        UniqueConstraint("owner_id", "external_id", name="uq_person_external"),
-    )
+    __table_args__ = (UniqueConstraint("owner_id", "external_id", name="uq_person_external"),)
     """取り込み元の識別子は団体の中で一意。
 
     別の団体が同じ人を自分の台帳に持つのは当然なので、全体では縛らない。
     """
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    owner_id: Mapped[int] = mapped_column(
-        ForeignKey("owners.id", ondelete="CASCADE"), index=True
-    )
+    owner_id: Mapped[int] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), index=True)
     nickname: Mapped[str] = mapped_column(String(NICKNAME_MAX))
     """読み上げに使う名前。**一意にしない。** 同名は postfix で見分ける。"""
 
     gender: Mapped[Gender] = mapped_column(_enum_column(Gender))
     level: Mapped[Level] = mapped_column(_enum_column(Level))
 
-    external_id: Mapped[str | None] = mapped_column(
-        String(EXTERNAL_ID_MAX), default=None, index=True
-    )
+    external_id: Mapped[str | None] = mapped_column(String(EXTERNAL_ID_MAX), default=None, index=True)
     """取り込み元の識別子（``bear:9001``）。手で登録した人は None。
 
     **向こうと繋がっているのはこの ID だけ。** 名前・性別・レベルは初回の
@@ -433,9 +403,7 @@ class Person(Base):
     """
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Owner(Base):
@@ -473,9 +441,7 @@ class Admin(Base):
     """
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class OwnerAdmin(Base):
@@ -487,12 +453,8 @@ class OwnerAdmin(Base):
 
     __tablename__ = "owner_admins"
 
-    owner_id: Mapped[int] = mapped_column(
-        ForeignKey("owners.id", ondelete="CASCADE"), primary_key=True
-    )
-    admin_id: Mapped[int] = mapped_column(
-        ForeignKey("admins.id", ondelete="CASCADE"), primary_key=True
-    )
+    owner_id: Mapped[int] = mapped_column(ForeignKey("owners.id", ondelete="CASCADE"), primary_key=True)
+    admin_id: Mapped[int] = mapped_column(ForeignKey("admins.id", ondelete="CASCADE"), primary_key=True)
     role: Mapped[str] = mapped_column(String(30), default="admin")
     """いまは使わない。役割を分けたくなったときに列を足さずに済むよう置いておく。"""
 

@@ -33,36 +33,25 @@ MAX_COURTS = 4
 """コート数の上限。実際の練習会で押さえられる面数から決めた。"""
 
 
-
-
 # ---------------------------------------------------------------------------
 # 練習会とコート
 # ---------------------------------------------------------------------------
 
 
-def _reject_duplicate_name(
-    db: Session, owner: Owner, name: str, *, exclude_id: int | None = None
-) -> None:
+def _reject_duplicate_name(db: Session, owner: Owner, name: str, *, exclude_id: int | None = None) -> None:
     """同じ名前の練習会があれば断る。
 
     選択画面はプルダウンに名前だけを出すので、同名だと見分けられない。
     見分けがつかないのは同じ団体の中だけなので、判定も団体の中で行う。
     """
-    query = select(PracticeSession).where(
-        PracticeSession.owner_id == owner.id, PracticeSession.name == name
-    )
+    query = select(PracticeSession).where(PracticeSession.owner_id == owner.id, PracticeSession.name == name)
     if exclude_id is not None:
         query = query.where(PracticeSession.id != exclude_id)
     if db.scalars(query).first() is not None:
-        raise ValidationError(
-            f"「{name}」という練習会がすでにあります。"
-            "終了させるか、別の名前にしてください。"
-        )
+        raise ValidationError(f"「{name}」という練習会がすでにあります。終了させるか、別の名前にしてください。")
 
 
-def create_session(
-    db: Session, owner: Owner, name: str, court_count: int = 2
-) -> PracticeSession:
+def create_session(db: Session, owner: Owner, name: str, court_count: int = 2) -> PracticeSession:
     """練習会を作る。コートは最大数ぶんまとめて作る。"""
     if not name.strip():
         raise ValidationError("練習会の名前を入力してください")
@@ -71,15 +60,11 @@ def create_session(
     name = name.strip()
     _reject_duplicate_name(db, owner, name)
 
-    session = PracticeSession(
-        owner_id=owner.id, name=name, random_seed=new_random_seed()
-    )
+    session = PracticeSession(owner_id=owner.id, name=name, random_seed=new_random_seed())
     db.add(session)
     db.flush()
     for index in range(court_count):
-        db.add(
-            Court(session_id=session.id, court_index=index, name=default_court_name(index))
-        )
+        db.add(Court(session_id=session.id, court_index=index, name=default_court_name(index)))
     try:
         db.commit()
     except IntegrityError as error:
@@ -89,8 +74,7 @@ def create_session(
             raise
         # 事前の確認とコミットの間に、別の端末が同じ名前で作った。
         raise ValidationError(
-            f"「{name}」という練習会がすでにあります。"
-            "終了させるか、別の名前にしてください。"
+            f"「{name}」という練習会がすでにあります。終了させるか、別の名前にしてください。"
         ) from error
     db.refresh(session)
     return session
@@ -103,9 +87,7 @@ def get_session(db: Session, token: str) -> PracticeSession:
     トークンは全体で一意な capability なので、ここでは団体で絞らない
     （QR を読んだメンバーは合言葉を持っていない）。
     """
-    session = db.scalars(
-        select(PracticeSession).where(PracticeSession.token == token)
-    ).first()
+    session = db.scalars(select(PracticeSession).where(PracticeSession.token == token)).first()
     if session is None:
         raise NotFoundError("練習会が見つかりません")
     return session
@@ -134,9 +116,7 @@ def list_sessions(db: Session, owner: Owner) -> list[PracticeSession]:
     """選択画面に出す一覧。ほかの団体の練習会は出さない。"""
     return list(
         db.scalars(
-            select(PracticeSession)
-            .where(PracticeSession.owner_id == owner.id)
-            .order_by(PracticeSession.id.desc())
+            select(PracticeSession).where(PracticeSession.owner_id == owner.id).order_by(PracticeSession.id.desc())
         )
     )
 
@@ -225,11 +205,7 @@ def add_member(
 
     途中参加でも公平になるよう下駄を履かせる。
     """
-    already = db.scalars(
-        select(Member).where(
-            Member.session_id == session.id, Member.person_id == person.id
-        )
-    ).first()
+    already = db.scalars(select(Member).where(Member.session_id == session.id, Member.person_id == person.id)).first()
     if already is not None and already.status is not MemberStatus.LEFT:
         # 二重に入ると、同じ人が別のコートの2試合に同時に割り当てられ得る。
         raise ValidationError(f"「{already.nickname}」はすでにこの練習会に入っています")
@@ -262,11 +238,7 @@ def add_member(
             db.refresh(already)
         return already
 
-    taken = {
-        member.nickname
-        for member in list_members(db, session.id)
-        if member.status is not MemberStatus.LEFT
-    }
+    taken = {member.nickname for member in list_members(db, session.id) if member.status is not MemberStatus.LEFT}
     member = Member(
         session_id=session.id,
         person_id=person.id,
@@ -342,12 +314,8 @@ def remove_member(db: Session, member: Member) -> None:
     どのラウンドにも登場していなければ本当に消す。登場していれば離脱扱いにして
     記録を残す（過去のマッチの表示が壊れないように）。
     """
-    appeared = db.scalars(
-        select(MatchSlot.id).where(MatchSlot.member_id == member.id)
-    ).first()
-    recorded = db.scalars(
-        select(RoundParticipation.id).where(RoundParticipation.member_id == member.id)
-    ).first()
+    appeared = db.scalars(select(MatchSlot.id).where(MatchSlot.member_id == member.id)).first()
+    recorded = db.scalars(select(RoundParticipation.id).where(RoundParticipation.member_id == member.id)).first()
     if appeared is None and recorded is None:
         db.delete(member)
     else:
@@ -356,11 +324,7 @@ def remove_member(db: Session, member: Member) -> None:
 
 
 def list_members(db: Session, session_id: int) -> list[Member]:
-    return list(
-        db.scalars(
-            select(Member).where(Member.session_id == session_id).order_by(Member.id)
-        )
-    )
+    return list(db.scalars(select(Member).where(Member.session_id == session_id).order_by(Member.id)))
 
 
 def duplicate_nicknames(members: list[Member]) -> set[str]:
@@ -373,12 +337,16 @@ def match_duplicate_nicknames(db: Session, round_id: int | None) -> list[str]:
     """表示中のラウンドに同名が2人以上いるか。どちらか分からなくなるので警告する。"""
     if round_id is None:
         return []
-    names = db.execute(
-        select(Member.nickname)
-        .join(MatchSlot, MatchSlot.member_id == Member.id)
-        .join(Match, Match.id == MatchSlot.match_id)
-        .where(Match.round_id == round_id)
-    ).scalars().all()
+    names = (
+        db.execute(
+            select(Member.nickname)
+            .join(MatchSlot, MatchSlot.member_id == Member.id)
+            .join(Match, Match.id == MatchSlot.match_id)
+            .where(Match.round_id == round_id)
+        )
+        .scalars()
+        .all()
+    )
     counts = Counter(names)
     return sorted(nickname for nickname, count in counts.items() if count > 1)
 
@@ -412,8 +380,7 @@ def check_event(session: PracticeSession, event_key: str) -> None:
     bound = session.external_event_id
     if bound is not None and bound != event_key:
         raise ValidationError(
-            f"この練習会はイベント {raw_id_of(bound)} から取り込んでいます。"
-            "別のイベントは取り込めません。"
+            f"この練習会はイベント {raw_id_of(bound)} から取り込んでいます。別のイベントは取り込めません。"
         )
 
 
@@ -473,11 +440,7 @@ def import_participants(
     if event_id is not None:
         _bind_event(db, session, external_key(SOURCE_TENNISBEAR, event_id))
     existing = list_members(db, session.id)
-    by_person = {
-        member.person_id: member
-        for member in existing
-        if member.person_id is not None
-    }
+    by_person = {member.person_id: member for member in existing if member.person_id is not None}
 
     added: list[str] = []
     unchanged = 0

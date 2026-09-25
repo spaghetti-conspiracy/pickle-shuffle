@@ -42,9 +42,7 @@ def test_a_wrong_password_is_refused(guest_client):
 
 def test_the_right_password_opens_the_gate(guest_client):
     assert guest_client.get("/api/sessions").status_code == 401
-    response = guest_client.post(
-        "/api/login", json={"password": settings.admin_password}
-    )
+    response = guest_client.post("/api/login", json={"password": settings.admin_password})
     assert response.status_code == 204
     assert COOKIE_NAME in response.cookies
     assert guest_client.get("/api/sessions").status_code == 200
@@ -97,9 +95,7 @@ def test_the_cookie_belongs_to_one_admin(db):
     from app.models import Admin
 
     admin = db.scalars(select(Admin)).one()
-    assert issue_cookie(admin.id, admin.password_hash) != issue_cookie(
-        admin.id + 1, admin.password_hash
-    )
+    assert issue_cookie(admin.id, admin.password_hash) != issue_cookie(admin.id + 1, admin.password_hash)
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +126,7 @@ def test_everything_else_is_behind_the_gate(client, guest_client):
     """
     session = create_session(client)
     add_members(client, session["token"], 8)
-    pending = client.post(
-        f"/api/sessions/{session['token']}/rounds/generate"
-    ).json()
+    pending = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
 
     token = session["token"]
     closed = [
@@ -192,9 +186,7 @@ def test_a_broken_cookie_is_refused_not_crashed(guest_client):
     ブラウザが送らない値でも、HTTP としては送れてしまうため。
     """
     for label, value in BROKEN_COOKIES:
-        response = guest_client.get(
-            "/api/sessions", headers={"Cookie": f"{COOKIE_NAME}={value}"}
-        )
+        response = guest_client.get("/api/sessions", headers={"Cookie": f"{COOKIE_NAME}={value}"})
         assert response.status_code == 401, f"{label}: {response.status_code}"
 
 
@@ -225,16 +217,12 @@ def test_another_owners_rows_are_not_reachable_by_id(client, db):
         sessions_service.add_member(
             db,
             stranger_session,
-            people_service.add_person(
-                db, other, nickname=f"x{i}", gender=Gender.MALE, level=Level.PICKLEBALL
-            ),
+            people_service.add_person(db, other, nickname=f"x{i}", gender=Gender.MALE, level=Level.PICKLEBALL),
         )
     stranger_member = sessions_service.list_members(db, stranger_session.id)[0]
     stranger_round = rounds_service.generate(db, stranger_session)
 
-    assert client.patch(
-        f"/api/members/{stranger_member.id}", json={"level": "beginner"}
-    ).status_code == 404
+    assert client.patch(f"/api/members/{stranger_member.id}", json={"level": "beginner"}).status_code == 404
     assert client.delete(f"/api/members/{stranger_member.id}").status_code == 404
     assert client.post(f"/api/rounds/{stranger_round.id}/adopt").status_code == 404
 
@@ -253,9 +241,7 @@ def test_changing_the_password_takes_effect_without_touching_the_db(db, monkeypa
     before = db.scalars(select(Admin)).one().password_hash
 
     # Settings は frozen なので、差し替えた写しを置く。
-    monkeypatch.setattr(
-        owners, "settings", replace(owners.settings, admin_password="あたらしい合言葉")
-    )
+    monkeypatch.setattr(owners, "settings", replace(owners.settings, admin_password="あたらしい合言葉"))
 
     with pytest.raises(UnauthorizedError):
         owners.authenticate(db, "まったく違う")
@@ -280,9 +266,7 @@ def test_a_real_admin_is_not_overwritten(db, monkeypatch):
     db.commit()
     kept = real.password_hash
 
-    monkeypatch.setattr(
-        owners, "settings", replace(owners.settings, admin_password="別の合言葉")
-    )
+    monkeypatch.setattr(owners, "settings", replace(owners.settings, admin_password="別の合言葉"))
     owners.authenticate(db, "別の合言葉")  # bootstrap の行が作り直される
 
     db.refresh(real)

@@ -230,12 +230,8 @@ def _run_lifespan(monkeypatch, *, needs: bool, boom: bool = False) -> dict:
 
     monkeypatch.setattr(app.main, "SessionLocal", fake_session)
     monkeypatch.setattr(app.main, "needs_setup", fake_needs_setup)
-    monkeypatch.setattr(
-        app.main, "settings", dataclasses.replace(app.main.settings, skip_db_init=False)
-    )
-    monkeypatch.setattr(
-        app.main, "create_all", lambda: calls.__setitem__("create_all", calls["create_all"] + 1)
-    )
+    monkeypatch.setattr(app.main, "settings", dataclasses.replace(app.main.settings, skip_db_init=False))
+    monkeypatch.setattr(app.main, "create_all", lambda: calls.__setitem__("create_all", calls["create_all"] + 1))
     monkeypatch.setattr(
         app.main,
         "ensure_bootstrap",

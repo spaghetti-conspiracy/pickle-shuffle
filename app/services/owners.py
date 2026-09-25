@@ -47,9 +47,7 @@ def ensure_bootstrap(db: Session) -> Owner:
         db.add(owner)
         db.flush()
 
-    admin = db.scalars(
-        select(Admin).where(Admin.login == BOOTSTRAP_LOGIN, Admin.is_bootstrap.is_(True))
-    ).first()
+    admin = db.scalars(select(Admin).where(Admin.login == BOOTSTRAP_LOGIN, Admin.is_bootstrap.is_(True))).first()
     if admin is None:
         admin = Admin(
             login=BOOTSTRAP_LOGIN,
@@ -109,9 +107,7 @@ def _refresh_bootstrap_password(db: Session) -> Admin | None:
         # このプロセスで突き合わせ済み。合わなかったのは合言葉のほう。
         return None
 
-    admin = db.scalars(
-        select(Admin).where(Admin.is_bootstrap.is_(True)).order_by(Admin.id)
-    ).first()
+    admin = db.scalars(select(Admin).where(Admin.is_bootstrap.is_(True)).order_by(Admin.id)).first()
     if admin is None:
         _synced_password = settings.admin_password
         return None

@@ -167,16 +167,13 @@ def _session(db, name="取り込みの確認"):
 
 
 def _participant(user_id, nickname, gender=Gender.MALE, level=Level.PICKLEBALL):
-    return Participant(
-        user_id=user_id, nickname=nickname, gender=gender, level=level
-    )
+    return Participant(user_id=user_id, nickname=nickname, gender=gender, level=level)
 
 
 def test_import_adds_everyone(db):
     session = _session(db)
     people = parse_event_page(sample_html())
-    result = sessions_service.import_participants(
-        db, current_owner(db), session, people, event_id=None)
+    result = sessions_service.import_participants(db, current_owner(db), session, people, event_id=None)
     assert len(result.added) == len(people)
     assert result.unchanged == 0
     members = sessions_service.list_members(db, session.id)
@@ -188,10 +185,8 @@ def test_importing_twice_adds_nobody(db):
     """再取り込みしても増えない。ID で見分ける。"""
     session = _session(db)
     people = parse_event_page(sample_html())
-    sessions_service.import_participants(
-        db, current_owner(db), session, people, event_id=None)
-    again = sessions_service.import_participants(
-        db, current_owner(db), session, people, event_id=None)
+    sessions_service.import_participants(db, current_owner(db), session, people, event_id=None)
+    again = sessions_service.import_participants(db, current_owner(db), session, people, event_id=None)
     assert again.added == []
     assert again.unchanged == len(people)
     assert len(sessions_service.list_members(db, session.id)) == len(people)
@@ -205,19 +200,16 @@ def test_reimport_keeps_what_the_organiser_fixed(db):
     """
     session = _session(db)
     people = parse_event_page(sample_html())
-    sessions_service.import_participants(
-        db, current_owner(db), session, people, event_id=None)
+    sessions_service.import_participants(db, current_owner(db), session, people, event_id=None)
     target = next(p for p in people if p.level is Level.PICKLEBALL)
     member = next(
         m
         for m in sessions_service.list_members(db, session.id)
-        if db.get(Person, m.person_id).external_id
-        == external_key(SOURCE_TENNISBEAR, target.user_id)
+        if db.get(Person, m.person_id).external_id == external_key(SOURCE_TENNISBEAR, target.user_id)
     )
     sessions_service.update_member(db, member, level=Level.BEGINNER, gender=Gender.FEMALE)
 
-    sessions_service.import_participants(
-        db, current_owner(db), session, people, event_id=None)
+    sessions_service.import_participants(db, current_owner(db), session, people, event_id=None)
 
     db.refresh(member)
     assert member.level is Level.BEGINNER, "直したレベルが戻っている"
@@ -232,9 +224,7 @@ def test_an_upstream_rename_is_not_followed(db):
     変えたくなるので、上流の都合で書き換わらない方が自然。
     """
     session = _session(db)
-    sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(2001, "旧名")], event_id=None
-    )
+    sessions_service.import_participants(db, current_owner(db), session, [_participant(2001, "旧名")], event_id=None)
     result = sessions_service.import_participants(
         db, current_owner(db), session, [_participant(2001, "新名")], event_id=None
     )
@@ -288,14 +278,16 @@ def test_attributes_come_back_from_a_previous_session(db):
     向こうの新しい呼び名は使わない（繋がっているのは ID だけ）。
     """
     first = _session(db, "先週")
-    sessions_service.import_participants(
-        db, current_owner(db), first, [_participant(5001, "だれか")], event_id=None)
+    sessions_service.import_participants(db, current_owner(db), first, [_participant(5001, "だれか")], event_id=None)
     member = sessions_service.list_members(db, first.id)[0]
     sessions_service.update_member(db, member, level=Level.BEGINNER)
 
     second = _session(db, "今週")
     sessions_service.import_participants(
-        db, current_owner(db), second, [_participant(5001, "だれか改", level=Level.PICKLEBALL)],
+        db,
+        current_owner(db),
+        second,
+        [_participant(5001, "だれか改", level=Level.PICKLEBALL)],
         event_id=None,
     )
     imported = sessions_service.list_members(db, second.id)[0]
@@ -316,7 +308,10 @@ def test_a_returning_participant_does_not_break_the_import(db):
     """
     first = _session(db, "先週")
     sessions_service.import_participants(
-        db, current_owner(db), first, [_participant(1, "マッツ"), _participant(2, "マッツ")],
+        db,
+        current_owner(db),
+        first,
+        [_participant(1, "マッツ"), _participant(2, "マッツ")],
         event_id=None,
     )
     assert [m.nickname for m in sessions_service.list_members(db, first.id)] == [
@@ -327,7 +322,10 @@ def test_a_returning_participant_does_not_break_the_import(db):
     # 今週は2人目だけが参加する
     second = _session(db, "今週")
     result = sessions_service.import_participants(
-        db, current_owner(db), second, [_participant(2, "マッツ")],
+        db,
+        current_owner(db),
+        second,
+        [_participant(2, "マッツ")],
         event_id=None,
     )
     assert result.added == ["マッツ2"], "取り込みが失敗している"
@@ -340,14 +338,16 @@ def test_a_namesake_does_not_inherit_someone_elses_level(db):
     ID が分かっている相手に、ニックネームで当てにいってはいけない。
     """
     first = _session(db, "先週")
-    sessions_service.import_participants(
-        db, current_owner(db), first, [_participant(1, "マッツ")], event_id=None)
+    sessions_service.import_participants(db, current_owner(db), first, [_participant(1, "マッツ")], event_id=None)
     member = sessions_service.list_members(db, first.id)[0]
     sessions_service.update_member(db, member, level=Level.BEGINNER)
 
     second = _session(db, "今週")
     sessions_service.import_participants(
-        db, current_owner(db), second, [_participant(2, "マッツ", level=Level.PICKLEBALL)],
+        db,
+        current_owner(db),
+        second,
+        [_participant(2, "マッツ", level=Level.PICKLEBALL)],
         event_id=None,
     )
     other = sessions_service.list_members(db, second.id)[0]
@@ -361,7 +361,10 @@ def test_the_same_person_twice_is_added_once(db):
     """
     session = _session(db)
     result = sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(7, "たろう"), _participant(7, "たろう")],
+        db,
+        current_owner(db),
+        session,
+        [_participant(7, "たろう"), _participant(7, "たろう")],
         event_id=None,
     )
     assert result.added == ["たろう"]
@@ -393,17 +396,21 @@ def test_someone_who_left_the_event_is_put_to_rest(db):
     """一覧から消えた人は休憩にする。削除はしない（統計が壊れる）。"""
     session = _session(db)
     sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(1, "残る人"), _participant(2, "抜ける人")],
+        db,
+        current_owner(db),
+        session,
+        [_participant(1, "残る人"), _participant(2, "抜ける人")],
         event_id=None,
     )
     result = sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(1, "残る人")],
+        db,
+        current_owner(db),
+        session,
+        [_participant(1, "残る人")],
         event_id=None,
     )
     assert result.resting == ["抜ける人"]
-    left = next(
-        m for m in sessions_service.list_members(db, session.id) if m.nickname == "抜ける人"
-    )
+    left = next(m for m in sessions_service.list_members(db, session.id) if m.nickname == "抜ける人")
     assert left.status is MemberStatus.RESTING
     assert left.id is not None, "消してはいけない"
 
@@ -416,8 +423,7 @@ def test_a_failed_import_leaves_nothing_behind(db):
     session = _session(db)
     people = [_participant(1, "先の人"), _participant(2, "   ")]
     with pytest.raises(ValidationError):
-        sessions_service.import_participants(
-        db, current_owner(db), session, people, event_id=None)
+        sessions_service.import_participants(db, current_owner(db), session, people, event_id=None)
     db.rollback()
     assert sessions_service.list_members(db, session.id) == []
 
@@ -448,9 +454,7 @@ def test_import_endpoint_returns_a_summary(client, monkeypatch):
 
     _fake_fetch(monkeypatch, sample_html())
     token = create_session(client)["token"]
-    response = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": 1}
-    )
+    response = client.post(f"/api/sessions/{token}/members/import", json={"event_id": 1})
     assert response.status_code == 200
     body = response.json()
     assert len(body["added"]) == 18
@@ -465,9 +469,7 @@ def test_importing_twice_through_the_api(client, monkeypatch):
     _fake_fetch(monkeypatch, sample_html())
     token = create_session(client)["token"]
     client.post(f"/api/sessions/{token}/members/import", json={"event_id": 1})
-    again = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": 1}
-    ).json()
+    again = client.post(f"/api/sessions/{token}/members/import", json={"event_id": 1}).json()
     assert again["added"] == []
     assert again["unchanged"] == 18
 
@@ -478,9 +480,7 @@ def test_an_unreadable_page_becomes_502(client, monkeypatch):
 
     _fake_fetch(monkeypatch, "<html>参加者はいません</html>")
     token = create_session(client)["token"]
-    response = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": 1}
-    )
+    response = client.post(f"/api/sessions/{token}/members/import", json={"event_id": 1})
     assert response.status_code == 502
     assert response.json()["code"] == "upstream"
 
@@ -490,9 +490,7 @@ def test_a_network_failure_becomes_502(client, monkeypatch):
 
     _fake_fetch(monkeypatch, error=UpstreamError("イベントページに接続できませんでした"))
     token = create_session(client)["token"]
-    response = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": 1}
-    )
+    response = client.post(f"/api/sessions/{token}/members/import", json={"event_id": 1})
     assert response.status_code == 502
 
 
@@ -500,9 +498,7 @@ def test_a_non_numeric_event_id_is_refused(client):
     from tests.test_api import create_session
 
     token = create_session(client)["token"]
-    response = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": "abc"}
-    )
+    response = client.post(f"/api/sessions/{token}/members/import", json={"event_id": "abc"})
     assert response.status_code == 422
 
 
@@ -513,14 +509,12 @@ def test_a_session_is_bound_to_one_event(db):
     イベントIDを打ち間違えたときに黙って起きると事故になる。
     """
     session = _session(db)
-    sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(1, "だれか")], event_id=111
-    )
+    sessions_service.import_participants(db, current_owner(db), session, [_participant(1, "だれか")], event_id=111)
     assert session.external_event_id == "bear:111"
 
     with pytest.raises(ValidationError):
         sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(2, "ほかの人")], event_id=222
+            db, current_owner(db), session, [_participant(2, "ほかの人")], event_id=222
         )
     db.rollback()
     assert len(sessions_service.list_members(db, session.id)) == 1
@@ -529,13 +523,13 @@ def test_a_session_is_bound_to_one_event(db):
 def test_the_same_event_can_be_imported_again(db):
     """同じイベントなら何度でも取り込める。直前に増えた人を足すのに使う。"""
     session = _session(db)
-    sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(1, "先の人")], event_id=111
-    )
+    sessions_service.import_participants(db, current_owner(db), session, [_participant(1, "先の人")], event_id=111)
     result = sessions_service.import_participants(
-        db, current_owner(db), session,
-            [_participant(1, "先の人"), _participant(2, "あとの人")],
-            event_id=111,
+        db,
+        current_owner(db),
+        session,
+        [_participant(1, "先の人"), _participant(2, "あとの人")],
+        event_id=111,
     )
     assert result.added == ["あとの人"]
     assert result.resting == []
@@ -549,14 +543,10 @@ def test_a_failed_import_does_not_bind_the_event(db):
     """
     session = _session(db)
     with pytest.raises(ValidationError):
-        sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(1, "   ")], event_id=111
-        )
+        sessions_service.import_participants(db, current_owner(db), session, [_participant(1, "   ")], event_id=111)
     db.rollback()
     assert session.external_event_id is None
-    sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(1, "だれか")], event_id=222
-    )
+    sessions_service.import_participants(db, current_owner(db), session, [_participant(1, "だれか")], event_id=222)
     assert session.external_event_id == "bear:222"
 
 
@@ -568,25 +558,21 @@ def test_a_refused_import_changes_nothing(db):
     """
     session = _session(db)
     sessions_service.import_participants(
-        db, current_owner(db), session,
-            [_participant(1, "先の人"), _participant(2, "あとの人")],
-            event_id=111,
+        db,
+        current_owner(db),
+        session,
+        [_participant(1, "先の人"), _participant(2, "あとの人")],
+        event_id=111,
     )
-    before = {
-        member.nickname: member.status
-        for member in sessions_service.list_members(db, session.id)
-    }
+    before = {member.nickname: member.status for member in sessions_service.list_members(db, session.id)}
 
     with pytest.raises(ValidationError):
         sessions_service.import_participants(
-        db, current_owner(db), session, [_participant(3, "よその人")], event_id=222
+            db, current_owner(db), session, [_participant(3, "よその人")], event_id=222
         )
     db.rollback()
 
-    after = {
-        member.nickname: member.status
-        for member in sessions_service.list_members(db, session.id)
-    }
+    after = {member.nickname: member.status for member in sessions_service.list_members(db, session.id)}
     assert after == before
     assert all(status is MemberStatus.ACTIVE for status in after.values())
     assert session.external_event_id == "bear:111"
@@ -598,15 +584,11 @@ def test_the_api_refuses_another_event(client, monkeypatch):
 
     _fake_fetch(monkeypatch, sample_html())
     token = create_session(client)["token"]
-    first = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": 111}
-    )
+    first = client.post(f"/api/sessions/{token}/members/import", json={"event_id": 111})
     assert first.status_code == 200, first.text
     count = len(client.get(f"/api/sessions/{token}/members").json())
 
-    response = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": 222}
-    )
+    response = client.post(f"/api/sessions/{token}/members/import", json={"event_id": 222})
     assert response.status_code == 422
     assert "別のイベントは取り込めません" in response.json()["detail"]
     assert len(client.get(f"/api/sessions/{token}/members").json()) == count
@@ -630,9 +612,7 @@ def test_another_event_is_refused_before_fetching(client, monkeypatch):
     client.post(f"/api/sessions/{token}/members/import", json={"event_id": 111})
     assert fetched == [111]
 
-    response = client.post(
-        f"/api/sessions/{token}/members/import", json={"event_id": 222}
-    )
+    response = client.post(f"/api/sessions/{token}/members/import", json={"event_id": 222})
     assert response.status_code == 422
     assert fetched == [111], "断るイベントのページを取りに行っている"
 
@@ -682,17 +662,13 @@ def test_a_hand_added_member_is_not_put_to_rest(db):
     """
     owner = current_owner(db)
     first = _session(db, "先週")
-    sessions_service.import_participants(
-        db, owner, first, [_participant(101, "あき")], event_id=None
-    )
+    sessions_service.import_participants(db, owner, first, [_participant(101, "あき")], event_id=None)
     person = people_service.find_by_external(db, owner, "bear:101")
 
     second = _session(db, "今週")
     sessions_service.add_member(db, second, person)  # 手で足す
 
-    result = sessions_service.import_participants(
-        db, owner, second, [_participant(202, "べつの人")], event_id=None
-    )
+    result = sessions_service.import_participants(db, owner, second, [_participant(202, "べつの人")], event_id=None)
 
     assert result.resting == [], "手で足した人が休憩にされている"
     added = sessions_service.list_members(db, second.id)
@@ -704,10 +680,11 @@ def test_someone_who_was_imported_is_still_put_to_rest(db):
     owner = current_owner(db)
     session = _session(db)
     sessions_service.import_participants(
-        db, owner, session, [_participant(1, "のこる"), _participant(2, "きえる")],
+        db,
+        owner,
+        session,
+        [_participant(1, "のこる"), _participant(2, "きえる")],
         event_id=None,
     )
-    result = sessions_service.import_participants(
-        db, owner, session, [_participant(1, "のこる")], event_id=None
-    )
+    result = sessions_service.import_participants(db, owner, session, [_participant(1, "のこる")], event_id=None)
     assert result.resting == ["きえる"]

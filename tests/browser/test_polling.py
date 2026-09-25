@@ -50,9 +50,7 @@ def test_it_asks_less_while_a_match_is_running(page, server, watch):
     page.goto(f"{server}/overview.html?session={token}", wait_until="networkidle")
     page.wait_for_selector("body[data-ready]", timeout=15000)
     page.click("#next")
-    page.wait_for_function(
-        "() => document.querySelectorAll('.court .player').length >= 8", timeout=15000
-    )
+    page.wait_for_function("() => document.querySelectorAll('.court .player').length >= 8", timeout=15000)
 
     guest = page.context.browser.new_context(viewport={"width": 390, "height": 780})
     try:

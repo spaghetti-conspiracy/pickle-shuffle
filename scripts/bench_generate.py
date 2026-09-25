@@ -8,12 +8,14 @@ CLAUDE.md の「性能の予算」の計測に使う。
 ``--against`` には、比べる相手のチェックアウト（例: main を `git worktree add` したもの）を渡す。
 同じマシンで、このチェックアウトと相手を**交互に** ``--repeat`` 回ずつ測り、構成ごとの中央値と
 その比（このチェックアウト / 相手）を出す。マシンの負荷で1〜2割ぶれるので、1回ずつの比較では
-判断しない。回ごとに先に測る側を入れ替えて、順番による偏りを消す。
+判断しない。回ごとに先に測る側を入れ替えて、順番による偏りを減らす。
 
 印を付ける条件（CLAUDE.md）: 比が 1.2 を超えた構成、平均が1秒を超えた構成。1秒の判定は平均で
-行う（ユーザー判断。doc/algorithm.md の表も平均）。1回ごとの最大は参考として表に出す。
+行う（ユーザー判断。doc/algorithm.md の表も平均）。1生成ごとの最大は参考として表に出す。
 
 測り方: 各構成を ``--seeds`` の各シードで ``--rounds`` ラウンド回し、1生成あたりの平均と最大（ms）。
+既定では 20名4面 だけで1本あたり約70秒（1生成が約1秒 x 24ラウンド x 3シード）かかり、
+``--against`` を付けると両側を ``--repeat`` 回ずつ走らせる。
 生成は `tests/simulation.py` の Simulator（本番と同じ導出規則）を通す。
 相手のチェックアウトにこのスクリプトが無くても測れるよう、各回は別プロセスで、測るコードの
 場所（``--root``）を先頭に置いて読み込む。読み込んだコードが ``--root`` の下になければ止める
@@ -189,7 +191,7 @@ def main() -> None:
 
     runs: dict[str, list[dict[str, dict[str, float]]]] = {name: [] for name, _ in sides}
     for turn in range(args.repeat if args.against else 1):
-        # 回ごとに先に測る側を入れ替える（ABBA）。温度などによる順番の偏りを消す。
+        # 回ごとに先に測る側を入れ替える（ABBA）。温度などによる順番の偏りを減らす。
         order = sides if turn % 2 == 0 else list(reversed(sides))
         for name, root in order:
             print(f"  {name} を測っている（{turn + 1}回目）…", file=sys.stderr, flush=True)

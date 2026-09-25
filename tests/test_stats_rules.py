@@ -51,6 +51,18 @@ def test_count_rest_credit(states, expected, why):
 
 
 @pytest.mark.parametrize(
+    ("seqs", "expected", "why"),
+    [
+        ([3, 4], 1, "続いたラウンドの休憩は1つのまとまり"),
+        ([3, 6], 0, "離脱していて記録が無い期間を挟むと、別々の休憩"),
+    ],
+)
+def test_rest_blocks_are_split_where_records_are_missing(seqs, expected, why):
+    """ラウンドの通し番号が飛んでいるところ（離脱していた期間）で休憩のまとまりを切る。"""
+    assert count_rest_credit([RESTING, RESTING], seqs=seqs) == expected, why
+
+
+@pytest.mark.parametrize(
     ("states", "expected"),
     [
         ([], 0),

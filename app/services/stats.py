@@ -48,6 +48,26 @@ def participation_states(db: Session, session_id: int) -> dict[int, list[Partici
     return states
 
 
+def participation_records(
+    db: Session, session_id: int
+) -> dict[int, list[tuple[int, ParticipationState]]]:
+    """メンバーごとの (ラウンドの通し番号, 状態) を、採用順に並べて返す。
+
+    番号が飛んでいるところは、その人が離脱していて記録が無い期間。
+    """
+    rows = db.execute(
+        select(RoundParticipation.member_id, RoundParticipation.state, Round.seq)
+        .join(Round, Round.id == RoundParticipation.round_id)
+        .where(Round.session_id == session_id, Round.status == RoundStatus.ADOPTED)
+        .order_by(Round.seq)
+    ).all()
+
+    records: dict[int, list[tuple[int, ParticipationState]]] = {}
+    for member_id, state, seq in rows:
+        records.setdefault(member_id, []).append((seq, state))
+    return records
+
+
 def round_levels(db: Session, session_id: int) -> dict[int, dict[int, Level]]:
     """ラウンドごとの、そのとき記録されたレベルを返す。
 
@@ -75,11 +95,14 @@ def build_player_stats(db: Session, session_id: int) -> list[PlayerStat]:
             .order_by(Member.id)
         )
     )
-    states = participation_states(db, session_id)
+    records = participation_records(db, session_id)
 
     stats = []
     for member in members:
-        derived = derive(states.get(member.id, []), member.status)
+        own = records.get(member.id, [])
+        derived = derive(
+            [state for _seq, state in own], member.status, seqs=[seq for seq, _state in own]
+        )
         stats.append(
             PlayerStat(
                 id=member.id,

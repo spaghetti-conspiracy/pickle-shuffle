@@ -106,6 +106,8 @@ class Simulator:
         self.status: dict[int, MemberStatus] = {m.id: MemberStatus.ACTIVE for m in members}
         self.baseline: dict[int, int] = {m.id: 0 for m in members}
         self.states: dict[int, list[ParticipationState]] = {m.id: [] for m in members}
+        # 各記録のラウンド番号。離脱していた期間は記録が無く、番号が飛ぶ。
+        self.seqs: dict[int, list[int]] = {m.id: [] for m in members}
         self.history = History()
         self.adopted_rounds = 0
         self.attempt = 0
@@ -124,6 +126,7 @@ class Simulator:
         self.specs[spec.id] = spec
         self.status[spec.id] = MemberStatus.ACTIVE
         self.states[spec.id] = []
+        self.seqs[spec.id] = []
         self.baseline[spec.id] = min((p.adjusted for p in actives), default=0)
 
     def set_status(self, member_id: int, status: MemberStatus) -> None:
@@ -139,7 +142,7 @@ class Simulator:
             status = self.status[member_id]
             if status is MemberStatus.LEFT:
                 continue
-            derived = derive(self.states[member_id], status)
+            derived = derive(self.states[member_id], status, seqs=self.seqs[member_id])
             stats.append(
                 PlayerStat(
                     id=member_id,
@@ -201,6 +204,7 @@ class Simulator:
             else:
                 state = ParticipationState.SAT_OUT
             self.states[member_id].append(state)
+            self.seqs[member_id].append(self.adopted_rounds)
 
         for match in plan.matches:
             self._record_match(match.team_a, match.team_b)

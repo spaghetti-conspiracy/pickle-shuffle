@@ -15,6 +15,7 @@ import statistics
 
 import pytest
 
+from app.models import Person
 from app.scheduler.domain import Gender, Level, MemberStatus
 from app.services import people as people_service
 from app.services import rounds as rounds_service
@@ -166,3 +167,24 @@ def test_a_late_joiner_plays_at_the_same_pace_from_joining(count, courts, seed):
     median = _median_of_others(after, range(1, late + 1), late)
     assert abs(_plays_in(after, late) - median) <= 1
 
+
+def test_rests_on_both_sides_of_leaving_are_counted_separately(db):
+    """「休憩 → 離脱 → 戻ってすぐ休憩」は2回の休憩。記録の上でつながって1回にならない。
+
+    離脱中は記録が書かれないので、並べると休憩が隣り合ってしまう。
+    """
+    session = _session(db)
+    for _ in range(3):
+        _next(db, session)
+    member = _member(db, session)
+    sessions_service.update_member(db, member, status=MemberStatus.RESTING)
+    _next(db, session)
+    sessions_service.remove_member(db, member)
+    _next(db, session)
+    _next(db, session)
+    back = sessions_service.add_member(db, session, db.get(Person, member.person_id))
+    sessions_service.update_member(db, back, status=MemberStatus.RESTING)
+    _next(db, session)
+
+    credit = _stat(db, session, back.id).rest_credit
+    assert credit == 0, "2回の休憩が1つのまとまりとして数えられている"

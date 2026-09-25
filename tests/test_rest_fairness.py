@@ -39,12 +39,76 @@ def _usual_interval(count: int, courts: int) -> int:
     return math.ceil(count / (courts * 4))
 
 
+def _long_rest(count: int, courts: int) -> int:
+    """これ以上休んだら「長い休憩」とみなすラウンド数。
+
+    普段の出番待ちより長く休んだときに初めて、休み明けとしてすぐ出すのが公平になる。
+    仕様の「2試合以上」も下限にする。
+    """
+    return max(2, _usual_interval(count, courts))
+
+
+LONG_RESTS = [
+    (count, courts, rest)
+    for count, courts in CONFIGS
+    for rest in sorted({_long_rest(count, courts), _long_rest(count, courts) + 2, 6})
+]
+
+
 def _plays_in(plans, member_id: int) -> int:
     return sum(member_id in plan.playing for plan in plans)
 
 
 def _median_of_others(plans, member_ids, watched: int) -> float:
     return statistics.median(_plays_in(plans, i) for i in member_ids if i != watched)
+
+
+# ---------------------------------------------------------------------------
+# 原則1: 長い休憩から戻った人は、試合に戻す
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.parametrize(("count", "courts", "rest"), LONG_RESTS)
+def test_someone_back_from_a_long_rest_plays_right_away(count, courts, rest, seed):
+    """普段の出番待ちより長く休んで戻った人は、戻った直後のラウンドに出場する。
+
+    「長い休憩」は `_long_rest`（普段の出場の間隔と、仕様の2試合の大きい方）以上。
+    皆が2試合休んで1回出る構成なら、3試合以上休んだときに初めて「すぐ出す」のが公平。
+    """
+    sim = Simulator(make_members(count), seed=seed, court_count=courts)
+    sim.run(6)
+    sim.set_status(WATCHED, MemberStatus.RESTING)
+    sim.run(rest)
+    sim.set_status(WATCHED, MemberStatus.ACTIVE)
+    (first,) = sim.run(1)
+    assert WATCHED in first.playing, f"{count}名{courts}面 {rest}R休憩: 戻った直後に出ていない"
+
+
+def _gap_to_others(sim, member_id: int):
+    """その人の adjusted と、他の人の adjusted の平均との差（端数を含む）。"""
+    stats = {p.id: p.adjusted for p in sim.player_stats()}
+    others = [v for k, v in stats.items() if k != member_id]
+    return stats[member_id] - sum(others) / len(others)
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.parametrize(("count", "courts", "rest"), LONG_RESTS)
+def test_a_long_rest_costs_at_most_one_match(count, courts, rest, seed):
+    """休んだ分を取り返させない。休憩で他の人との差が開くのは、1試合分まで。
+
+    仕様「2試合分以上固めて休んだ場合でも、1試合分の不参加という扱いでよい」。
+    差が1試合分を超えて開くと、戻った後にその分を取り戻すように出場させてしまう。
+    出場回数を数える窓で確かめると、出場の割合が低い構成では出番の巡り合わせで
+    ぶれるので、adjusted（端数を含む）で直接確かめる。
+    """
+    sim = Simulator(make_members(count), seed=seed, court_count=courts)
+    sim.run(6)
+    before = _gap_to_others(sim, WATCHED)
+    sim.set_status(WATCHED, MemberStatus.RESTING)
+    sim.run(rest)
+    sim.set_status(WATCHED, MemberStatus.ACTIVE)
+    assert before - _gap_to_others(sim, WATCHED) <= 1
 
 
 # ---------------------------------------------------------------------------

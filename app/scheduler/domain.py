@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
+from fractions import Fraction
 
 
 class Gender(str, Enum):
@@ -235,8 +237,9 @@ class PlayerStat:
     plays: int = 0
     """実際に出場した回数。"""
 
-    rest_credit: int = 0
-    """休憩によるみなし出場回数。連続休憩ブロック1つにつき ``長さ-1``。"""
+    rest_credit: Fraction | int = 0
+    """休憩によるみなし出場回数（端数を含む）。休憩のまとまり1つにつき、休んでいる間に
+    他の人が増やした出場回数の見込み − 1（`stats_rules.count_rest_credit`）。"""
 
     sit_out_streak: int = 0
     """末尾から続く「出場可能だったのに出番がなかった」回数。"""
@@ -251,9 +254,18 @@ class PlayerStat:
     status: MemberStatus = MemberStatus.ACTIVE
 
     @property
-    def adjusted(self) -> int:
-        """公平性の評価軸。この値が小さいほど優先的に出場させる。"""
-        return self.baseline + self.plays + self.rest_credit
+    def adjusted(self) -> Fraction:
+        """公平性の評価軸。この値が小さいほど優先的に出場させる。休憩のみなし出場の端数を含む。"""
+        return self.baseline + self.plays + Fraction(self.rest_credit)
+
+    @property
+    def adjusted_whole(self) -> int:
+        """``adjusted`` の整数部分。生成の出場の枠と評価関数、途中参加の下駄はこちらを使う。
+
+        端数のまま使うと、ほぼ全員の値がばらばらになり、同じ値の人の中から入れ替えて
+        良い組み方を探す余地が消える（ばらけが落ちる）。スコアも整数で保てる（不変則10）。
+        """
+        return math.floor(self.adjusted)
 
     @property
     def is_beginner(self) -> bool:

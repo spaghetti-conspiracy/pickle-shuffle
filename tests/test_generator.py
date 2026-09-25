@@ -220,6 +220,7 @@ def test_a_long_rest_costs_one_match_even_when_slots_are_spare():
     sim.run(2)
     resting_id = sim.adopted_plans[-1].playing[0]
     before = sim.stat(resting_id).adjusted
+    others_before = {p.id: p.adjusted for p in sim.player_stats() if p.id != resting_id}
 
     sim.set_status(resting_id, MemberStatus.RESTING)
     sim.run(3)
@@ -227,8 +228,10 @@ def test_a_long_rest_costs_one_match_even_when_slots_are_spare():
 
     rested = sim.stat(resting_id)
     assert rested.plays == before, "休んでいる間は出場していない"
-    assert rested.rest_credit == 2, "3ラウンドの休みブロックは 3-1=2 のみなし出場"
-    assert rested.adjusted == before + 2, "欠損は人数によらず1試合分"
+    # 休んでいる間、他の人は9人で8枠を争った（出場の割合 8/9）。平均の伸びは 8/9 x 3。
+    others = [p for p in sim.player_stats() if p.id != resting_id]
+    gained = sum(p.adjusted - others_before[p.id] for p in others) / len(others)
+    assert rested.adjusted == before + gained - 1, "欠損は人数によらず、他の人の平均と比べて1試合分"
 
     # 復帰後は枠の中で追いつく。ローテーションの揺れは slack+1 に収まる。
     sim.run(8)

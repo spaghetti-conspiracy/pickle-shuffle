@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 from collections import defaultdict
 from dataclasses import dataclass
+from fractions import Fraction
 
 from app.scheduler.domain import (
     Gender,
@@ -108,6 +109,8 @@ class Simulator:
         self.states: dict[int, list[ParticipationState]] = {m.id: [] for m in members}
         # 各記録のラウンド番号。離脱していた期間は記録が無く、番号が飛ぶ。
         self.seqs: dict[int, list[int]] = {m.id: [] for m in members}
+        # ラウンドごとの出場の割合（本番の stats.round_rates と同じ定義）。
+        self.rates: dict[int, Fraction] = {}
         self.history = History()
         self.adopted_rounds = 0
         self.attempt = 0
@@ -127,7 +130,7 @@ class Simulator:
         self.status[spec.id] = MemberStatus.ACTIVE
         self.states[spec.id] = []
         self.seqs[spec.id] = []
-        self.baseline[spec.id] = min((p.adjusted for p in actives), default=0)
+        self.baseline[spec.id] = min((p.adjusted_whole for p in actives), default=0)
 
     def set_status(self, member_id: int, status: MemberStatus) -> None:
         """休憩・復帰・離脱。"""
@@ -142,7 +145,13 @@ class Simulator:
             status = self.status[member_id]
             if status is MemberStatus.LEFT:
                 continue
-            derived = derive(self.states[member_id], status, seqs=self.seqs[member_id])
+            seqs = self.seqs[member_id]
+            derived = derive(
+                self.states[member_id],
+                status,
+                seqs=seqs,
+                rates=[self.rates.get(seq, Fraction(1)) for seq in seqs],
+            )
             stats.append(
                 PlayerStat(
                     id=member_id,
@@ -194,9 +203,12 @@ class Simulator:
     def adopt(self, plan: RoundPlan) -> None:
         """採用する。スナップショットを1行ずつ記録し、履歴を更新する。"""
         playing = set(plan.playing)
+        eligible = 0
         for member_id, status in self.status.items():
             if status is MemberStatus.LEFT:
                 continue
+            if member_id in playing or status is not MemberStatus.RESTING:
+                eligible += 1
             if member_id in playing:
                 state = ParticipationState.PLAYED
             elif status is MemberStatus.RESTING:
@@ -205,6 +217,8 @@ class Simulator:
                 state = ParticipationState.SAT_OUT
             self.states[member_id].append(state)
             self.seqs[member_id].append(self.adopted_rounds)
+
+        self.rates[self.adopted_rounds] = Fraction(len(playing), eligible)
 
         for match in plan.matches:
             self._record_match(match.team_a, match.team_b)

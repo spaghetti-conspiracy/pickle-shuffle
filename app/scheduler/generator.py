@@ -183,7 +183,8 @@ class _State:
             partner=dict(history.partner_count),
             opponent=dict(history.opponent_count),
             beginner_partner=dict(history.beginner_partner_count),
-            adjusted={p.id: p.adjusted for p in active},
+            # 整数部分で出場者を選ぶ（`PlayerStat.adjusted_whole`）。
+            adjusted={p.id: p.adjusted_whole for p in active},
             sit_out_streak={p.id: p.sit_out_streak for p in active},
             just_returned={p.id for p in active if p.just_returned},
             group=dict(history.group_count),

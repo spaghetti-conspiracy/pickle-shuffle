@@ -232,6 +232,39 @@ def test_a_late_joiner_plays_at_the_same_pace_from_joining(count, courts, seed):
     assert abs(_plays_in(after, late) - median) <= 1
 
 
+# ---------------------------------------------------------------------------
+# 離脱から戻った人（途中参加と同じ扱い。ユーザー判断）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rests_before_leaving", [0, 1, 2])
+def test_someone_who_left_and_came_back_restarts_at_the_bottom(db, rests_before_leaving):
+    """離脱から戻った人は、戻った時点で出場可能メンバーの最小 adjusted から再開し、すぐ出る。
+
+    離脱前の出場回数や休憩の不足は、戻った時点で帳消しにする（途中参加と同じ）。
+    """
+    session = _session(db)
+    for _ in range(3):
+        _next(db, session)
+    member = _member(db, session)
+    for _ in range(rests_before_leaving):
+        sessions_service.update_member(db, member, status=MemberStatus.RESTING)
+        _next(db, session)
+        sessions_service.update_member(db, member, status=MemberStatus.ACTIVE)
+        _next(db, session)
+
+    sessions_service.remove_member(db, member)
+    for _ in range(4):
+        _next(db, session)
+    back = sessions_service.add_member(db, session, db.get(Person, member.person_id))
+
+    stats = stats_service.build_player_stats(db, session.id)
+    lowest = min(p.adjusted for p in stats if p.status is MemberStatus.ACTIVE and p.id != back.id)
+    assert _stat(db, session, back.id).adjusted == lowest
+    soon = _playing(_next(db, session)) | _playing(_next(db, session))
+    assert back.id in soon, "戻っても出番が無い"
+
+
 def test_rests_on_both_sides_of_leaving_are_counted_separately(db):
     """「休憩 → 離脱 → 戻ってすぐ休憩」は2回の休憩。記録の上でつながって1回にならない。
 

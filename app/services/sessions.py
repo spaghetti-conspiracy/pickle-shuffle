@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from dataclasses import dataclass
 
@@ -248,8 +249,16 @@ def add_member(
         # 一度外した人が戻ってきた。**新しい行は作らず、離脱した行を戻す。**
         # 別の行にすると同じ人の記録が2つに割れ、それまでの出場が無かった
         # ことになって、その人だけ連続出場することになる。
+        # 下駄は、戻った時点で adjusted がちょうど最小値になるように決める。
+        # 離脱前の出場回数や休憩のみなし出場は記録に残っているので、その分を差し引く。
+        # 下駄を最小値そのものにすると、離脱前の出場回数が上乗せされ、
+        # その回数と同じくらいのラウンド数だけ出番が回らなくなる。
+        # 離脱前の休憩で積み上がった不足は帳消しになる（途中参加と同じ扱い。ユーザー判断）。
         already.status = MemberStatus.ACTIVE
-        already.baseline = baseline
+        db.flush()
+        own = next(p for p in stats.build_player_stats(db, session.id) if p.id == already.id)
+        # みなし出場の端数は下駄に入れない。adjusted の整数部分がちょうど最小値になる。
+        already.baseline = baseline - own.plays - math.floor(own.rest_credit)
         already.joined_by_import = by_import
         if commit:
             db.commit()

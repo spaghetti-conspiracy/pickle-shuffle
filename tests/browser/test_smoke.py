@@ -190,3 +190,35 @@ def test_it_says_what_it_is_doing_while_slow(page):
     assert result["first"].startswith("点検しています"), result
     assert result["later"] != result["first"], "止まって見える（点が増えていない）"
     assert result["afterDone"] == "", "終わったのに残っている"
+
+
+def test_the_match_number_is_shown_on_both_screens(page, server, watch):
+    """全体表示ではコート名の前に、メンバー用画面では試合の上に「第n試合」が出る。"""
+    token = _make_session(page, server, _unique("試合番号"))
+    for i in range(8):
+        page.fill("#new-nickname", _unique(f"n{i}-"))
+        page.click("#add-member")
+        page.wait_for_function(
+            "(n) => document.querySelectorAll('#members-body tr').length === n",
+            arg=i + 1,
+            timeout=10000,
+        )
+
+    page.goto(f"{server}/overview.html?session={token}", wait_until="networkidle")
+    page.wait_for_selector("body[data-ready]", timeout=15000)
+    page.click("#next")
+    page.wait_for_function("() => document.querySelectorAll('.court .player').length >= 8", timeout=15000)
+    names = page.eval_on_selector_all(".court-name", "els => els.map(e => e.textContent)")
+    assert names[0].startswith("第1試合 "), names
+    assert names[1].startswith("第2試合 "), names
+
+    guest = page.context.browser.new_context(viewport={"width": 390, "height": 780})
+    try:
+        member = watch(guest.new_page())
+        member.goto(f"{server}/member.html?session={token}", wait_until="networkidle")
+        member.wait_for_selector("body[data-ready]", timeout=15000)
+        expect(member.locator(".member-match-number")).to_have_text("第1試合", timeout=15000)
+        member.locator(".tab").nth(1).click()
+        expect(member.locator(".member-match-number")).to_have_text("第2試合")
+    finally:
+        guest.close()

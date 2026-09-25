@@ -382,6 +382,11 @@ tr.left {
   border-bottom: 1px solid var(--line);
 }
 
+.court-name .match-number {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .court-body {
   display: flex;
   align-items: center;
@@ -655,6 +660,12 @@ tr.left {
   .member-team .player {
     font-size: max(1rem, min(9vw, calc(94cqw / var(--len, 4))));
   }
+}
+
+.member-match-number {
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 700;
 }
 
 .member-versus {

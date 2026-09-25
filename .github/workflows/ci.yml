@@ -12,6 +12,9 @@ on:
   push:
     branches: [main]
   pull_request:
+    # 既定の3つに ready_for_review を足す。draft の間は走らせないので（下の各ジョブの if）、
+    # draft を外したときに走らないと、取り込める状態かを確かめられない。
+    types: [opened, synchronize, reopened, ready_for_review]
 
 # PR に続けて push したら、古い実行は止める。
 # **main の実行は止めない。** 途中のコミットの CI が cancelled で終わると、
@@ -25,6 +28,8 @@ permissions:
 
 jobs:
   test:
+    # draft の PR では走らせない（CLAUDE.md「開発から取り込みまでの手順」。draft の間は手元で確かめる）。
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     name: テスト (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -66,6 +71,8 @@ jobs:
         run: uv run pytest
 
   serverless:
+    # draft の PR では走らせない（CLAUDE.md「開発から取り込みまでの手順」。draft の間は手元で確かめる）。
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     name: Vercel と同じ形で起動する
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -133,6 +140,8 @@ jobs:
         run: '[ -f uvicorn.pid ] && kill "$(cat uvicorn.pid)" || true' 
 
   postgres:
+    # draft の PR では走らせない（CLAUDE.md「開発から取り込みまでの手順」。draft の間は手元で確かめる）。
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     name: 本番と同じ DB で通す
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -225,6 +234,8 @@ jobs:
         run: '[ -f uvicorn.pid ] && kill "$(cat uvicorn.pid)" || true' 
 
   container:
+    # draft の PR では走らせない（CLAUDE.md「開発から取り込みまでの手順」。draft の間は手元で確かめる）。
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     name: コンテナが組み上がる
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -759,3 +759,103 @@ def test_a_person_of_another_owner_is_not_listed(client, db):
     session = create_session(client)
     response = client.post(f"/api/sessions/{session['token']}/members", json={"person_id": stranger.id})
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 試合番号（第n試合）
+# ---------------------------------------------------------------------------
+
+
+def match_numbers(data: dict) -> list[int | None]:
+    """コートの並び順での試合番号。試合の入っていないコートは None。"""
+    return [court["match_number"] for court in data["courts"]]
+
+
+def generate(client, session: dict) -> dict:
+    response = client.post(f"/api/sessions/{session['token']}/rounds/generate")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def adopt(client, current: dict) -> dict:
+    response = client.post(f"/api/rounds/{current['round_id']}/adopt")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def set_in_use(client, session: dict, index: int, in_use: bool) -> None:
+    court = session["courts"][index]
+    response = client.patch(f"/api/sessions/{session['token']}/courts/{court['id']}", json={"in_use": in_use})
+    assert response.status_code == 200, response.text
+
+
+def test_matches_are_numbered_through_the_session(client):
+    """試合番号は練習会を通した1試合（1コート分）ごとの通し番号。ラウンドをまたいで続く。"""
+    session = create_session(client, court_count=2)
+    add_members(client, session["token"], 13)
+
+    first = adopt(client, generate(client, session))
+    assert match_numbers(first) == [1, 2]
+    second = adopt(client, generate(client, session))
+    assert match_numbers(second) == [3, 4]
+
+
+def test_regenerating_keeps_the_numbers(client):
+    """スキップして生成し直しても番号は変わらない。採用しなかった試合は数えない。"""
+    session = create_session(client, court_count=2)
+    add_members(client, session["token"], 13)
+
+    pending = generate(client, session)
+    assert match_numbers(pending) == [1, 2], "開始前の試合にも、開始すれば付く番号を出す"
+    client.post(f"/api/rounds/{pending['round_id']}/reject")
+    again = generate(client, session)
+    assert match_numbers(again) == [1, 2]
+    adopt(client, again)
+    assert match_numbers(generate(client, session)) == [3, 4]
+
+
+def test_numbers_continue_when_courts_are_added_or_removed(client):
+    """試合用のコートを増減しても、番号は飛ばず重ならず続きから振られる。"""
+    session = create_session(client, court_count=3)
+    add_members(client, session["token"], 13)
+
+    assert match_numbers(adopt(client, generate(client, session))) == [1, 2, 3]
+    set_in_use(client, session, 2, False)
+    assert match_numbers(adopt(client, generate(client, session))) == [4, 5, None]
+    set_in_use(client, session, 1, False)
+    assert match_numbers(adopt(client, generate(client, session))) == [6, None, None]
+    set_in_use(client, session, 1, True)
+    set_in_use(client, session, 2, True)
+    assert match_numbers(adopt(client, generate(client, session))) == [7, 8, 9]
+
+
+def test_changing_courts_mid_round_does_not_renumber_the_displayed_matches(client):
+    """試合中にコートを練習用へ回しても、表示中の試合の番号は変わらない（不変則12）。"""
+    session = create_session(client, court_count=2)
+    add_members(client, session["token"], 13)
+
+    adopt(client, generate(client, session))
+    set_in_use(client, session, 0, False)
+    current = client.get(f"/api/sessions/{session['token']}/current").json()
+    assert match_numbers(current) == [1, 2]
+
+
+def test_an_undone_round_gives_its_numbers_back(client):
+    """「元に戻す」で取り消したラウンドの番号は、次に採用するラウンドが使い直す。"""
+    session = create_session(client, court_count=2)
+    add_members(client, session["token"], 13)
+
+    adopt(client, generate(client, session))
+    second = adopt(client, generate(client, session))
+    client.post(f"/api/rounds/{second['round_id']}/undo")
+    assert match_numbers(client.get(f"/api/sessions/{session['token']}/current").json()) == [1, 2]
+    assert match_numbers(generate(client, session)) == [3, 4]
+
+
+def test_a_court_without_a_match_has_no_number(client):
+    """人数が足りずに空いたコートと、まだ生成していないコートには番号を付けない。"""
+    session = create_session(client, court_count=2)
+    add_members(client, session["token"], 6)
+
+    assert match_numbers(client.get(f"/api/sessions/{session['token']}/current").json()) == [None, None]
+    assert match_numbers(generate(client, session)) == [1, None]

@@ -66,7 +66,14 @@ function renderCourt(court, highlightBeginners) {
 
   const name = document.createElement("div");
   name.className = "court-name";
-  name.textContent = court.name;
+  if (court.match_number !== null) {
+    // 読み上げで「第5試合、Aコート」と呼べるよう、番号をコート名の前に置く。
+    const number = document.createElement("span");
+    number.className = "match-number";
+    number.textContent = `第${court.match_number}試合`;
+    name.append(number, " ");
+  }
+  name.append(court.name);
   element.append(name);
 
   const body = document.createElement("div");

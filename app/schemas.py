@@ -229,6 +229,11 @@ class CourtStateOut(BaseModel):
     """
 
     match: MatchOut | None = None
+    match_number: int | None = None
+    """第n試合。練習会を通した1試合（1コート分）ごとの通し番号。試合が入っていなければ None。
+
+    開始前（pending）の試合には、開始すれば付く番号を出す。
+    """
 
 
 class CurrentOut(BaseModel):

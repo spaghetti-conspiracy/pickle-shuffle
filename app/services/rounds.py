@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -45,6 +45,24 @@ def current_round(db: Session, session_id: int) -> Round | None:
         .where(Round.session_id == session_id, Round.status == RoundStatus.ADOPTED)
         .order_by(Round.seq.desc())
     ).first()
+
+
+def match_numbers(db: Session, round_: Round) -> dict[int, int]:
+    """そのラウンドの試合番号（コート id → 第n試合）。練習会を通した1試合ごとの通し番号。
+
+    保存はせず、記録から導く。それより前に採用したラウンドの試合の数に、ラウンドの中での
+    コートの並び順を足す。未採用（pending）のラウンドは、採用済みの全試合の続きにする
+    （開始すれば付く番号。スキップして生成し直しても変わらない）。
+    コートの増減は、過去のラウンドに入った試合の数を変えないので番号がずれない。
+    「元に戻す」で消えたラウンドの番号は、次に採用するラウンドが使い直す。
+    """
+    earlier = select(func.count(Match.id)).join(Round, Round.id == Match.round_id)
+    earlier = earlier.where(Round.session_id == round_.session_id, Round.status == RoundStatus.ADOPTED)
+    if round_.status is RoundStatus.ADOPTED:
+        earlier = earlier.where(Round.seq < round_.seq)
+    base = db.scalar(earlier) or 0
+    ordered = sorted(round_.matches, key=lambda match: match.court.court_index)
+    return {match.court_id: base + position for position, match in enumerate(ordered, start=1)}
 
 
 def _last_adopted_id(db: Session, session_id: int) -> int:

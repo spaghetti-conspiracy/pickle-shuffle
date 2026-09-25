@@ -27,7 +27,9 @@ def count_plays(states: Sequence[ParticipationState]) -> int:
     return sum(1 for s in states if s is ParticipationState.PLAYED)
 
 
-def count_rest_credit(states: Sequence[ParticipationState]) -> int:
+def count_rest_credit(
+    states: Sequence[ParticipationState], *, seqs: Sequence[int] | None = None
+) -> int:
     """休憩によるみなし出場回数。
 
     仕様「2試合分以上まとめて休んだ場合でも、1試合分の不参加という扱いでよい」の実装。
@@ -35,10 +37,20 @@ def count_rest_credit(states: Sequence[ParticipationState]) -> int:
     こうすると、どれだけ長く休んでも参加回数の欠損はブロックあたり 1 に留まる。
 
     休んだ分を後で取り返させると、また疲れて休むことになる、というのが仕様の意図。
+
+    ``seqs`` は各記録のラウンドの通し番号。番号が飛んでいるところ（離脱していて記録が
+    無い期間）では休憩のまとまりを切る。切らないと、「休憩 → 離脱 → 戻ってすぐ休憩」の
+    2回の休憩が、記録の上で隣り合って1つのまとまりとして数えられてしまう。
+    省略したときは、記録が途切れなく続いているものとみなす。
     """
     credit = 0
     in_block = False
-    for state in states:
+    previous_seq: int | None = None
+    for index, state in enumerate(states):
+        seq = seqs[index] if seqs is not None else None
+        if seq is not None and previous_seq is not None and seq != previous_seq + 1:
+            in_block = False
+        previous_seq = seq
         if state is ParticipationState.RESTING:
             if in_block:
                 credit += 1
@@ -73,11 +85,19 @@ def is_just_returned(states: Sequence[ParticipationState], status: MemberStatus)
     return bool(states) and states[-1] is ParticipationState.RESTING
 
 
-def derive(states: Sequence[ParticipationState], status: MemberStatus) -> DerivedStats:
-    """スナップショット列（採用された順）から統計をまとめて導出する。"""
+def derive(
+    states: Sequence[ParticipationState],
+    status: MemberStatus,
+    *,
+    seqs: Sequence[int] | None = None,
+) -> DerivedStats:
+    """スナップショット列（採用された順）から統計をまとめて導出する。
+
+    ``seqs`` は各記録のラウンドの通し番号（`count_rest_credit` を参照）。
+    """
     return DerivedStats(
         plays=count_plays(states),
-        rest_credit=count_rest_credit(states),
+        rest_credit=count_rest_credit(states, seqs=seqs),
         sit_out_streak=count_sit_out_streak(states),
         just_returned=is_just_returned(states, status),
     )

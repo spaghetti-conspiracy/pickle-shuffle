@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import pytest
 
 from app.scheduler.domain import MemberStatus, ParticipationState
@@ -117,3 +119,21 @@ def test_long_rest_costs_only_one_match_of_deficit():
     stayed_adjusted = stayed.plays + stayed.rest_credit
     rested_adjusted = rested.plays + rested.rest_credit
     assert stayed_adjusted - rested_adjusted == 1
+
+
+@pytest.mark.parametrize(
+    ("rest", "rate", "expected", "why"),
+    [
+        (1, Fraction(8, 9), Fraction(0), "1ラウンドだけの休憩はみなし出場0（負にしない）"),
+        (3, Fraction(8, 9), Fraction(5, 3), "割合 8/9 で3ラウンドなら 8/9 x 3 − 1"),
+        (3, Fraction(1), Fraction(2), "全員が毎ラウンド出る構成では 長さ − 1"),
+        (2, Fraction(1, 3), Fraction(0), "2試合休んで1回出る構成の2ラウンドは普段の出番待ち"),
+        (6, Fraction(1, 2), Fraction(2), "半分が出る構成で6ラウンドなら 3 − 1"),
+    ],
+)
+def test_rest_credit_is_scaled_by_the_participation_rate(rest, rate, expected, why):
+    """みなし出場は、休んでいる間に他の人が増やした出場回数の見込み − 1（0 未満にしない）。
+
+    見込みは各ラウンドの出場の割合の合計。全員が毎ラウンド出る構成では 長さ − 1 に一致する。
+    """
+    assert count_rest_credit([RESTING] * rest, rates=[rate] * rest) == expected, why

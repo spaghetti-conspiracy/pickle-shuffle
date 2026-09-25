@@ -26,13 +26,7 @@ from app.services.naming import unique_nickname
 
 def list_people(db: Session, owner: Owner) -> list[Person]:
     """台帳の一覧。名前の順に出す。"""
-    return list(
-        db.scalars(
-            select(Person)
-            .where(Person.owner_id == owner.id)
-            .order_by(Person.nickname, Person.id)
-        )
-    )
+    return list(db.scalars(select(Person).where(Person.owner_id == owner.id).order_by(Person.nickname, Person.id)))
 
 
 def get_person(db: Session, owner: Owner, person_id: int) -> Person:
@@ -48,20 +42,12 @@ def find_by_external(db: Session, owner: Owner, external_id: str) -> Person | No
     ニックネームでは引かない。同名の別人の属性をそのまま被ってしまう
     （「マッツ」を初心者に直したら、別の「マッツ」も初心者で入る）。
     """
-    return db.scalars(
-        select(Person).where(
-            Person.owner_id == owner.id, Person.external_id == external_id
-        )
-    ).first()
+    return db.scalars(select(Person).where(Person.owner_id == owner.id, Person.external_id == external_id)).first()
 
 
 def taken_nicknames(db: Session, owner: Owner, *, exclude_id: int | None = None) -> set[str]:
     """台帳で使われている名前。番号を振るために使う。"""
-    return {
-        person.nickname
-        for person in list_people(db, owner)
-        if exclude_id is None or person.id != exclude_id
-    }
+    return {person.nickname for person in list_people(db, owner) if exclude_id is None or person.id != exclude_id}
 
 
 def add_person(
@@ -113,9 +99,7 @@ def update_person(
     """
     renamed = False
     if nickname is not None:
-        wanted = unique_nickname(
-            _clean(nickname), taken_nicknames(db, owner, exclude_id=person.id)
-        )
+        wanted = unique_nickname(_clean(nickname), taken_nicknames(db, owner, exclude_id=person.id))
         renamed = wanted != person.nickname
         person.nickname = wanted
     if gender is not None:
@@ -223,9 +207,7 @@ def _propagate(db: Session, person: Person, *, rename: bool) -> None:
     付け直した名前（`update_member`）は台帳に上げない約束なので、属性を直した
     ついでに下りで上書きすると、その言い換えを黙って消してしまう。
     """
-    members = list(
-        db.scalars(select(Member).where(Member.person_id == person.id))
-    )
+    members = list(db.scalars(select(Member).where(Member.person_id == person.id)))
     for member in members:
         if member.status is MemberStatus.LEFT:
             # 離脱した人の行は記録のためにあるので、もう書き換えない。
@@ -236,9 +218,7 @@ def _propagate(db: Session, person: Person, *, rename: bool) -> None:
             continue
         taken = {
             other.nickname
-            for other in db.scalars(
-                select(Member).where(Member.session_id == member.session_id)
-            )
+            for other in db.scalars(select(Member).where(Member.session_id == member.session_id))
             if other.id != member.id and other.status is not MemberStatus.LEFT
         }
         member.nickname = unique_nickname(person.nickname, taken)

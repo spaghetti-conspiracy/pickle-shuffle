@@ -63,6 +63,7 @@ def _make_scorer(stats, state):
 
     return _Scorer(stats, state, Weights(), rng=random.Random(0))
 
+
 def uniform_players(count: int, start_id: int = 1) -> list[PlayerStat]:
     """属性がすべて同じメンバー。編成のスコアが全通り同点になる。"""
     return [player(start_id + i) for i in range(count)]
@@ -97,9 +98,7 @@ def assert_plan_is_consistent(plan: RoundPlan, court_count: int) -> None:
     assert plan.court_count == court_count
     assert len(plan.playing) == plan.used_court_count * 4
     assert len(set(plan.playing)) == len(plan.playing), "同じ人が2箇所に出ている"
-    assert [m.court_index for m in plan.matches] == list(range(plan.used_court_count)), (
-        "使うコートは 0 から順に詰める"
-    )
+    assert [m.court_index for m in plan.matches] == list(range(plan.used_court_count)), "使うコートは 0 から順に詰める"
     assert plan.unused_court_indexes == tuple(range(plan.used_court_count, court_count))
     assert not (set(plan.playing) & set(plan.sitting_out))
     assert not (set(plan.playing) & set(plan.resting))
@@ -138,9 +137,7 @@ def test_eight_members_on_two_courts_everyone_plays_every_round():
     assert max(counts.values()) == min(counts.values()) == 20
 
 
-@pytest.mark.parametrize(
-    ("count", "rounds"), [(5, 5), (6, 3), (7, 7), (9, 9), (10, 5), (12, 3), (16, 2)]
-)
+@pytest.mark.parametrize(("count", "rounds"), [(5, 5), (6, 3), (7, 7), (9, 9), (10, 5), (12, 3), (16, 2)])
 def test_play_counts_are_exactly_equal_after_a_full_cycle(count, rounds):
     """出場枠がちょうど一巡するラウンド数を回したら、参加回数は完全に揃う。
 
@@ -175,9 +172,7 @@ def test_fewer_plays_are_preferred_when_the_envelope_is_widened():
             rng=make_rng(seed, 1, 0),
             fairness_slack=1,
         )
-        assert set(plan.playing) == {p.id for p in behind}, (
-            "出場回数が1多い人を、少ない人より先に出している"
-        )
+        assert set(plan.playing) == {p.id for p in behind}, "出場回数が1多い人を、少ない人より先に出している"
 
 
 def test_a_long_rest_costs_only_one_match_of_deficit():
@@ -279,9 +274,7 @@ def test_late_joiner_does_not_monopolise_the_court():
     # なので、そのばらつきは「最終の adjusted の差」と「参加時点の adjusted の差」の
     # 和までは広がりうる。どちらも公平性の枠 (SLACK + 1) に収まっている。
     gained = {i: p.plays - plays_before.get(i, 0) for i, p in stats.items()}
-    assert max(gained.values()) - min(gained.values()) <= 2 * (SLACK + 1), (
-        "参加してから先の出場回数も枠内に収まる"
-    )
+    assert max(gained.values()) - min(gained.values()) <= 2 * (SLACK + 1), "参加してから先の出場回数も枠内に収まる"
     assert stats[99].plays < max(p.plays for i, p in stats.items() if i != 99), (
         "遅刻した分の出場回数を取り返させはしない"
     )
@@ -339,9 +332,7 @@ def test_the_just_returned_bonus_lasts_one_round_in_the_lookahead_too():
     state.apply([((1, 2), (3, 4))], [p.id for p in stats], frozenset())
 
     assert 5 not in state.just_returned
-    derived = derive(
-        [ParticipationState.RESTING, ParticipationState.SAT_OUT], MemberStatus.ACTIVE
-    )
+    derived = derive([ParticipationState.RESTING, ParticipationState.SAT_OUT], MemberStatus.ACTIVE)
     assert derived.just_returned is False
 
 
@@ -477,9 +468,7 @@ def test_rule_unaware_partners_do_not_count_as_someone_new():
 
 def _repeated_foursomes(plans: list[RoundPlan]) -> int:
     """同じ4人の試合（ペアの分け方は問わない）が繰り返された回数。"""
-    seen: Counter = Counter(
-        tuple(sorted(match.member_ids)) for plan in plans for match in plan.matches
-    )
+    seen: Counter = Counter(tuple(sorted(match.member_ids)) for plan in plans for match in plan.matches)
     return sum(n - 1 for n in seen.values())
 
 
@@ -507,9 +496,7 @@ def test_three_of_the_last_foursome_are_rarely_together_again():
     again = 0
     for before, after in zip(plans, plans[1:], strict=False):
         last = [set(m.member_ids) for m in before.matches]
-        again += sum(
-            any(len(set(m.member_ids) & group) >= 3 for group in last) for m in after.matches
-        )
+        again += sum(any(len(set(m.member_ids) & group) >= 3 for group in last) for m in after.matches)
     assert again <= 1
 
 
@@ -562,13 +549,9 @@ def test_almost_everyone_shares_a_court_with_everyone():
 
         sizes = [len(partners) for partners in met.values()]
         others = len(sim.specs) - 1
-        assert min(sizes) >= others - 2, (
-            f"seed={seed}: 一度も当たっていない相手が多すぎる（最少 {min(sizes)} 人）"
-        )
+        assert min(sizes) >= others - 2, f"seed={seed}: 一度も当たっていない相手が多すぎる（最少 {min(sizes)} 人）"
         average = sum(sizes) / len(sizes)
-        assert average >= 14.5, (
-            f"seed={seed}: 取りこぼしが増えている（平均 {average:.2f} 人 / {others} 人中）"
-        )
+        assert average >= 14.5, f"seed={seed}: 取りこぼしが増えている（平均 {average:.2f} 人 / {others} 人中）"
 
 
 def test_variety_stays_close_to_the_theoretical_optimum():
@@ -625,9 +608,7 @@ def test_registration_order_does_not_leak_into_the_selection():
     picked_first_half = 0
     mean_ids = []
     for seed in range(60):
-        plan = generate_round(
-            players, History(), court_count=2, seed=seed, rng=make_rng(seed, 1, 0)
-        )
+        plan = generate_round(players, History(), court_count=2, seed=seed, rng=make_rng(seed, 1, 0))
         if set(plan.playing) == set(range(1, 9)):
             picked_first_half += 1
         mean_ids.append(sum(plan.playing) / len(plan.playing))
@@ -647,9 +628,7 @@ def test_court_partners_are_not_biased_towards_small_ids():
     players = uniform_players(12)
     partners: Counter = Counter()
     for seed in range(120):
-        plan = generate_round(
-            players, History(), court_count=3, seed=seed, rng=make_rng(seed, 1, 0)
-        )
+        plan = generate_round(players, History(), court_count=3, seed=seed, rng=make_rng(seed, 1, 0))
         for match in plan.matches:
             if players[0].id in match.member_ids:
                 partners.update(x for x in match.member_ids if x != players[0].id)
@@ -668,9 +647,7 @@ def test_tied_arrangements_are_drawn_uniformly():
     players = uniform_players(8)
     trials = 300
     signatures = [
-        generate_round(
-            players, History(), court_count=2, seed=seed, rng=make_rng(seed, 1, 0)
-        ).signature()
+        generate_round(players, History(), court_count=2, seed=seed, rng=make_rng(seed, 1, 0)).signature()
         for seed in range(trials)
     ]
     counts = Counter(signatures)
@@ -686,10 +663,7 @@ def test_different_sessions_play_out_differently():
         sim = Simulator(players, seed=seed)
         plan = sim.generate()
         signatures.add(plan.signature())
-    assert len(signatures) >= 15, (
-        f"20シード中 {len(signatures)} 通りしか出ていない。"
-        "練習会ごとに展開が変わると言えない"
-    )
+    assert len(signatures) >= 15, f"20シード中 {len(signatures)} 通りしか出ていない。練習会ごとに展開が変わると言えない"
 
 
 def test_same_seed_reproduces_the_same_result():
@@ -806,9 +780,7 @@ def _split_cases():
     for count in (12, 16):
         cases.append((f"全員同じ{count}人", uniform_players(count), History(), count // 4))
     for count, courts, beginners, racket in ((12, 3, 2, 2), (13, 3, 3, 2), (16, 4, 0, 0)):
-        sim = Simulator(
-            make_members(count, beginners=beginners, racket=racket), seed=31, court_count=courts
-        )
+        sim = Simulator(make_members(count, beginners=beginners, racket=racket), seed=31, court_count=courts)
         sim.run(6)
         cases.append((f"{count}人{courts}面・6ラウンド後", sim.player_stats(), sim.history, courts))
     return cases
@@ -866,12 +838,7 @@ def test_tie_break_bytes_are_unchanged():
 
 
 def beginner_pairs_in(plan: RoundPlan, beginner_ids: set[int]) -> int:
-    return sum(
-        1
-        for match in plan.matches
-        for team in (match.team_a, match.team_b)
-        if set(team) <= beginner_ids
-    )
+    return sum(1 for match in plan.matches for team in (match.team_a, match.team_b) if set(team) <= beginner_ids)
 
 
 @pytest.mark.parametrize(("count", "beginners"), [(16, 2), (13, 2), (13, 3), (10, 2)])
@@ -972,15 +939,11 @@ def test_the_beginner_burden_is_uneven_without_the_mechanism():
     どれも初心者と組む相手を散らす方向に働くので、残すと受け持ちが均され、
     `beginner_spread` の効きが見えなくなる。
     """
-    weights = dataclasses.replace(
-        Weights(), beginner_spread=0, premature_repeat=0, same_group=0, recent_trio=0
-    )
+    weights = dataclasses.replace(Weights(), beginner_spread=0, premature_repeat=0, same_group=0, recent_trio=0)
     sim = Simulator(make_members(16, beginners=2), seed=1357, weights=weights)
     sim.run(24)
     counts = [sim.history.beginner_partners(i) for i in range(3, 17)]
-    assert max(counts) - min(counts) > 1, (
-        "機構を切ってもばらつかないなら、上の閾値は何も見張っていない"
-    )
+    assert max(counts) - min(counts) > 1, "機構を切ってもばらつかないなら、上の閾値は何も見張っていない"
 
 
 def test_rule_unaware_players_are_not_paired_together():
@@ -1035,9 +998,10 @@ def test_strength_ignores_gender_for_beginners():
     assert male.strength == female.strength == 0
 
     # 初心者以外は性別で差が付く
-    assert player(3, gender=Gender.MALE, level=Level.PICKLEBALL).strength > player(
-        4, gender=Gender.FEMALE, level=Level.PICKLEBALL
-    ).strength
+    assert (
+        player(3, gender=Gender.MALE, level=Level.PICKLEBALL).strength
+        > player(4, gender=Gender.FEMALE, level=Level.PICKLEBALL).strength
+    )
 
 
 def test_the_level_gap_is_larger_below_than_above():

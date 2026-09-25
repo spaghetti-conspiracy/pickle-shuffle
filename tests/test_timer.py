@@ -108,9 +108,7 @@ def test_changing_the_limit_mid_match_changes_the_remaining_time(client):
 
     session = create_session(client)
     add_members(client, session["token"], 13)
-    current = client.post(
-        f"/api/sessions/{session['token']}/rounds/generate"
-    ).json()
+    current = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
     client.post(f"/api/rounds/{current['round_id']}/adopt")
 
     before = client.get(f"/api/sessions/{session['token']}/current").json()["timer"]
@@ -137,17 +135,10 @@ def test_the_limit_is_between_three_and_fifteen_minutes(client):
 
     session = create_session(client)
     for minutes in (2, 16):
-        response = client.patch(
-            f"/api/sessions/{session['token']}", json={"timer_minutes": minutes}
-        )
+        response = client.patch(f"/api/sessions/{session['token']}", json={"timer_minutes": minutes})
         assert response.status_code == 422, f"{minutes}分が通ってしまう"
     for minutes in (3, 7, 15):
-        assert (
-            client.patch(
-                f"/api/sessions/{session['token']}", json={"timer_minutes": minutes}
-            ).status_code
-            == 200
-        )
+        assert client.patch(f"/api/sessions/{session['token']}", json={"timer_minutes": minutes}).status_code == 200
 
 
 def test_pause_and_resume_through_the_api(client):
@@ -155,9 +146,7 @@ def test_pause_and_resume_through_the_api(client):
 
     session = create_session(client)
     add_members(client, session["token"], 13)
-    current = client.post(
-        f"/api/sessions/{session['token']}/rounds/generate"
-    ).json()
+    current = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
     round_id = current["round_id"]
     client.post(f"/api/rounds/{round_id}/adopt")
 
@@ -174,9 +163,7 @@ def test_an_unknown_timer_action_is_refused(client):
 
     session = create_session(client)
     add_members(client, session["token"], 13)
-    current = client.post(
-        f"/api/sessions/{session['token']}/rounds/generate"
-    ).json()
+    current = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
     client.post(f"/api/rounds/{current['round_id']}/adopt")
     response = client.post(f"/api/rounds/{current['round_id']}/timer/rewind")
     assert response.status_code == 422

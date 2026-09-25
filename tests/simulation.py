@@ -74,9 +74,7 @@ def make_members(
             level = Level.RACKET_EXPERIENCED
         else:
             level = Level.PICKLEBALL
-        members.append(
-            MemberSpec(id=start_id + i, nickname=f"m{start_id + i}", gender=gender, level=level)
-        )
+        members.append(MemberSpec(id=start_id + i, nickname=f"m{start_id + i}", gender=gender, level=level))
     return members
 
 
@@ -178,8 +176,7 @@ class Simulator:
 
     # ----- ラウンド -------------------------------------------------------
 
-    def generate(self, *, players: list[PlayerStat] | None = None, rng: random.Random | None = None
-                 ) -> RoundPlan:
+    def generate(self, *, players: list[PlayerStat] | None = None, rng: random.Random | None = None) -> RoundPlan:
         """次のラウンドを生成する（採用はしない）。"""
         return generate_round(
             players if players is not None else self.player_stats(),
@@ -222,9 +219,7 @@ class Simulator:
 
         for match in plan.matches:
             self._record_match(match.team_a, match.team_b)
-        self.history.last_round_groups = tuple(
-            tuple(sorted(match.member_ids)) for match in plan.matches
-        )
+        self.history.last_round_groups = tuple(tuple(sorted(match.member_ids)) for match in plan.matches)
 
         self.adopted_rounds += 1
         self.attempt = 0
@@ -301,10 +296,7 @@ class Simulator:
         gaps = []
         for plan in self.adopted_plans:
             for match in plan.matches:
-                sides = [
-                    sum(by_id[i].strength for i in team)
-                    for team in (match.team_a, match.team_b)
-                ]
+                sides = [sum(by_id[i].strength for i in team) for team in (match.team_a, match.team_b)]
                 gaps.append(abs(sides[0] - sides[1]))
         return gaps
 

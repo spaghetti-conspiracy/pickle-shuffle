@@ -38,8 +38,15 @@ ROOT = Path(__file__).resolve().parent.parent
 # (人数, 面数, 初心者, ラケット経験者)。CLAUDE.md の「評価する構成」（13名・12名・16名を
 # 2面と3面で）と、表で最も遅いもの（16名3面・20名4面）、初心者入りの構成。
 DEFAULT_CONFIGS = [
-    (12, 2, 0, 0), (12, 3, 0, 0), (13, 2, 0, 0), (13, 3, 0, 0), (13, 3, 3, 2),
-    (16, 2, 0, 0), (16, 3, 0, 0), (16, 4, 0, 0), (20, 4, 0, 0),
+    (12, 2, 0, 0),
+    (12, 3, 0, 0),
+    (13, 2, 0, 0),
+    (13, 3, 0, 0),
+    (13, 3, 3, 2),
+    (16, 2, 0, 0),
+    (16, 3, 0, 0),
+    (16, 4, 0, 0),
+    (20, 4, 0, 0),
 ]
 RATIO_LIMIT = 1.2
 """この比を超えて遅くなったら諮る（CLAUDE.md）。"""
@@ -68,9 +75,7 @@ def measure(
 
     for module in (app.scheduler.generator, tests.simulation):
         if not Path(module.__file__).resolve().is_relative_to(root):
-            raise SystemExit(
-                f"{root} ではなく {module.__file__} を読み込んだ。パスを確かめてください"
-            )
+            raise SystemExit(f"{root} ではなく {module.__file__} を読み込んだ。パスを確かめてください")
 
     result: dict[str, dict[str, float]] = {}
     for config in configs:
@@ -122,8 +127,17 @@ def _check_root(root: Path) -> None:
 def _run_once(root: Path, args: argparse.Namespace) -> dict[str, dict[str, float]]:
     """別プロセスで ``root`` のコードを測る（読み込んだモジュールが混ざらないように）。"""
     command = [
-        sys.executable, __file__, "--measure-only", "--root", str(root),
-        "--rounds", str(args.rounds), "--seeds", args.seeds_text, "--configs", args.configs_text,
+        sys.executable,
+        __file__,
+        "--measure-only",
+        "--root",
+        str(root),
+        "--rounds",
+        str(args.rounds),
+        "--seeds",
+        args.seeds_text,
+        "--configs",
+        args.configs_text,
     ]
     # stderr は捕まえずに流す（失敗したときに原因がそのまま見える）。
     done = subprocess.run(command, stdout=subprocess.PIPE, text=True)
@@ -133,7 +147,7 @@ def _run_once(root: Path, args: argparse.Namespace) -> dict[str, dict[str, float
 
 
 def _parse_configs(text: str) -> list[tuple[int, int, int, int]]:
-    """"12x3,13x3:3:2" → [(12, 3, 0, 0), (13, 3, 3, 2)]。"""
+    """例: "12x3,13x3:3:2" → [(12, 3, 0, 0), (13, 3, 3, 2)]。"""
     configs = []
     for item in text.split(","):
         size, _, rest = item.partition(":")

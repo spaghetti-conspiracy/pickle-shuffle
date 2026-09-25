@@ -28,9 +28,7 @@ def adopted_rounds(db: Session, session_id: int) -> list[Round]:
     """採用済みラウンドを採用順に返す。"""
     return list(
         db.scalars(
-            select(Round)
-            .where(Round.session_id == session_id, Round.status == RoundStatus.ADOPTED)
-            .order_by(Round.seq)
+            select(Round).where(Round.session_id == session_id, Round.status == RoundStatus.ADOPTED).order_by(Round.seq)
         )
     )
 
@@ -50,9 +48,7 @@ def participation_states(db: Session, session_id: int) -> dict[int, list[Partici
     return states
 
 
-def participation_records(
-    db: Session, session_id: int
-) -> dict[int, list[tuple[int, ParticipationState]]]:
+def participation_records(db: Session, session_id: int) -> dict[int, list[tuple[int, ParticipationState]]]:
     """メンバーごとの (ラウンドの通し番号, 状態) を、採用順に並べて返す。
 
     番号が飛んでいるところは、その人が離脱していて記録が無い期間。
@@ -108,9 +104,7 @@ def round_levels(db: Session, session_id: int) -> dict[int, dict[int, Level]]:
     return levels
 
 
-def build_player_stats(
-    db: Session, session_id: int, *, include_left: bool = False
-) -> list[PlayerStat]:
+def build_player_stats(db: Session, session_id: int, *, include_left: bool = False) -> list[PlayerStat]:
     """生成に渡す PlayerStat の一覧。離脱済みのメンバーは含めない。
 
     ``include_left`` を真にすると離脱済みのメンバーも含める（離脱から戻る人の
@@ -184,14 +178,10 @@ def build_history(db: Session, session_id: int) -> History:
             key = pair_key(*team)
             history.partner_count[key] = history.partner_count.get(key, 0) + 1
             first, second = team
-            was_beginner = {
-                m: (m in at_the_time and at_the_time[m].is_beginner) for m in team
-            }
+            was_beginner = {m: (m in at_the_time and at_the_time[m].is_beginner) for m in team}
             if was_beginner[first] != was_beginner[second]:
                 non_beginner = second if was_beginner[first] else first
-                history.beginner_partner_count[non_beginner] = (
-                    history.beginner_partner_count.get(non_beginner, 0) + 1
-                )
+                history.beginner_partner_count[non_beginner] = history.beginner_partner_count.get(non_beginner, 0) + 1
         for x in team_a:
             for y in team_b:
                 key = pair_key(x, y)
@@ -208,7 +198,4 @@ def build_history(db: Session, session_id: int) -> History:
 def play_counts(db: Session, session_id: int) -> dict[int, int]:
     """メンバーごとの実際の出場回数。管理画面の確認用。"""
     states = participation_states(db, session_id)
-    return {
-        member_id: sum(1 for s in st if s is ParticipationState.PLAYED)
-        for member_id, st in states.items()
-    }
+    return {member_id: sum(1 for s in st if s is ParticipationState.PLAYED) for member_id, st in states.items()}

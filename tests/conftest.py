@@ -100,8 +100,6 @@ def client(session_factory):
     管理者が操作している場面を見たいので、ここで一度通しておく。
     """
     with TestClient(_test_app(session_factory)) as test_client:
-        response = test_client.post(
-            "/api/login", json={"password": settings.admin_password}
-        )
+        response = test_client.post("/api/login", json={"password": settings.admin_password})
         assert response.status_code == 204, response.text
         yield test_client

@@ -134,9 +134,7 @@ def main() -> None:
     project = os.environ.get("VERCEL_PROJECT_ID")
     team = os.environ.get("VERCEL_ORG_ID")
     if not (token and project and team):
-        raise SystemExit(
-            "VERCEL_TOKEN / VERCEL_PROJECT_ID / VERCEL_ORG_ID を設定してください"
-        )
+        raise SystemExit("VERCEL_TOKEN / VERCEL_PROJECT_ID / VERCEL_ORG_ID を設定してください")
 
     def get(path: str) -> dict:
         return _call("GET", path, token)

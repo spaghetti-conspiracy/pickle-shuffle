@@ -288,9 +288,7 @@ def test_someone_who_left_after_a_long_rest_also_restarts_at_the_bottom(db):
     back = sessions_service.add_member(db, session, db.get(Person, member.person_id))
 
     stats = stats_service.build_player_stats(db, session.id)
-    lowest = min(
-        p.adjusted_rounded for p in stats if p.status is MemberStatus.ACTIVE and p.id != back.id
-    )
+    lowest = min(p.adjusted_rounded for p in stats if p.status is MemberStatus.ACTIVE and p.id != back.id)
     assert _stat(db, session, back.id).adjusted_rounded == lowest
 
 

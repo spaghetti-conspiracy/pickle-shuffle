@@ -25,9 +25,7 @@ def lineup(data: dict) -> list:
 
 
 def create_session(client, name="練習会", court_count=2) -> dict:
-    response = client.post(
-        "/api/sessions", json={"name": name, "court_count": court_count}
-    )
+    response = client.post("/api/sessions", json={"name": name, "court_count": court_count})
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -40,9 +38,7 @@ def add_members(client, session_id: int, count: int, beginners: int = 0) -> list
             json={
                 "nickname": f"m{i + 1}",
                 "gender": Gender.MALE.value if i % 2 == 0 else Gender.FEMALE.value,
-                "level": (
-                    Level.BEGINNER.value if i < beginners else Level.PICKLEBALL.value
-                ),
+                "level": (Level.BEGINNER.value if i < beginners else Level.PICKLEBALL.value),
             },
         )
         assert response.status_code == 201, response.text
@@ -206,12 +202,7 @@ def test_a_member_who_starts_resting_mid_round_is_flagged(client):
     session = create_session(client)
     members = add_members(client, session["token"], 13)
     current = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
-    playing = next(
-        p["id"]
-        for court in current["courts"]
-        if court["match"]
-        for p in court["match"]["team_a"]
-    )
+    playing = next(p["id"] for court in current["courts"] if court["match"] for p in court["match"]["team_a"])
     client.patch(f"/api/members/{playing}", json={"status": "resting"})
 
     after = client.get(f"/api/sessions/{session['token']}/current").json()
@@ -228,12 +219,7 @@ def test_a_member_who_leaves_mid_round_is_dimmed(client):
     session = create_session(client)
     add_members(client, session["token"], 13)
     before = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
-    playing = next(
-        p["id"]
-        for court in before["courts"]
-        if court["match"]
-        for p in court["match"]["team_a"]
-    )
+    playing = next(p["id"] for court in before["courts"] if court["match"] for p in court["match"]["team_a"])
     assert all(
         not p["unavailable"]
         for court in before["courts"]
@@ -264,12 +250,7 @@ def test_a_level_change_mid_round_is_flagged(client):
     session = create_session(client)
     members = add_members(client, session["token"], 13)
     before = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
-    playing = next(
-        p["id"]
-        for court in before["courts"]
-        if court["match"]
-        for p in court["match"]["team_a"]
-    )
+    playing = next(p["id"] for court in before["courts"] if court["match"] for p in court["match"]["team_a"])
     client.patch(f"/api/members/{playing}", json={"level": Level.BEGINNER.value})
 
     after = client.get(f"/api/sessions/{session['token']}/current").json()
@@ -307,9 +288,7 @@ def test_a_court_can_be_turned_into_a_practice_court(client):
     client.post(f"/api/sessions/{session['token']}/rounds/generate")
 
     court = session["courts"][1]
-    response = client.patch(
-        f"/api/sessions/{session['token']}/courts/{court['id']}", json={"in_use": False}
-    )
+    response = client.patch(f"/api/sessions/{session['token']}/courts/{court['id']}", json={"in_use": False})
     assert response.status_code == 200
     assert response.json()["in_use"] is False
 
@@ -317,9 +296,7 @@ def test_a_court_can_be_turned_into_a_practice_court(client):
     assert [c["state"] for c in current["courts"]] == ["match", "practice"]
     assert len(current["waiting"]) == 9
 
-    client.patch(
-        f"/api/sessions/{session['token']}/courts/{court['id']}", json={"in_use": True}
-    )
+    client.patch(f"/api/sessions/{session['token']}/courts/{court['id']}", json={"in_use": True})
     current = client.post(f"/api/sessions/{session['token']}/rounds/generate").json()
     assert [c["state"] for c in current["courts"]] == ["match", "match"]
 
@@ -371,21 +348,15 @@ def test_a_practice_court_is_not_called_short_of_players(client):
 def test_courts_can_be_renamed(client):
     session = create_session(client)
     court = session["courts"][0]
-    response = client.patch(
-        f"/api/sessions/{session['token']}/courts/{court['id']}", json={"name": "手前"}
-    )
+    response = client.patch(f"/api/sessions/{session['token']}/courts/{court['id']}", json={"name": "手前"})
     assert response.json()["name"] == "手前"
 
 
 def test_the_last_court_cannot_be_taken_out(client):
     session = create_session(client, court_count=2)
     first, second = session["courts"]
-    client.patch(
-        f"/api/sessions/{session['token']}/courts/{first['id']}", json={"in_use": False}
-    )
-    response = client.patch(
-        f"/api/sessions/{session['token']}/courts/{second['id']}", json={"in_use": False}
-    )
+    client.patch(f"/api/sessions/{session['token']}/courts/{first['id']}", json={"in_use": False})
+    response = client.patch(f"/api/sessions/{session['token']}/courts/{second['id']}", json={"in_use": False})
     assert response.status_code == 409
 
 
@@ -476,9 +447,7 @@ def test_member_qr_points_at_the_host_the_browser_used(client):
     class _Request:
         base_url = "http://192.168.1.10:8000/"
 
-    assert member_page_url(_Request(), "abc123xyz0") == (
-        "http://192.168.1.10:8000/member.html?session=abc123xyz0"
-    )
+    assert member_page_url(_Request(), "abc123xyz0") == ("http://192.168.1.10:8000/member.html?session=abc123xyz0")
 
 
 def test_public_base_url_overrides_the_request_host(monkeypatch):
@@ -493,12 +462,8 @@ def test_public_base_url_overrides_the_request_host(monkeypatch):
     class _Request:
         base_url = "http://localhost:8000/"
 
-    monkeypatch.setattr(
-        api, "settings", replace(api.settings, public_base_url="http://192.168.1.10:8000")
-    )
-    assert api.member_page_url(_Request(), "tok1234567") == (
-        "http://192.168.1.10:8000/member.html?session=tok1234567"
-    )
+    monkeypatch.setattr(api, "settings", replace(api.settings, public_base_url="http://192.168.1.10:8000"))
+    assert api.member_page_url(_Request(), "tok1234567") == ("http://192.168.1.10:8000/member.html?session=tok1234567")
 
 
 def test_current_reports_the_member_url(client):
@@ -549,9 +514,7 @@ def test_statistics_are_never_shared_between_sessions(client):
     add_members(client, morning["token"], 8)
     current = client.post(f"/api/sessions/{morning['token']}/rounds/generate").json()
     client.post(f"/api/rounds/{current['round_id']}/adopt")
-    assert sum(
-        client.get(f"/api/sessions/{morning['token']}/stats").json()["play_counts"].values()
-    ) == 8
+    assert sum(client.get(f"/api/sessions/{morning['token']}/stats").json()["play_counts"].values()) == 8
 
     afternoon = create_session(client, "午後")
     add_members(client, afternoon["token"], 8)
@@ -664,9 +627,7 @@ def test_the_same_session_name_is_refused(client):
     選択画面はプルダウンに名前だけを出すので、同名だと見分けられない。
     """
     first = create_session(client, "木曜練習会")
-    response = client.post(
-        "/api/sessions", json={"name": "木曜練習会", "court_count": 2}
-    )
+    response = client.post("/api/sessions", json={"name": "木曜練習会", "court_count": 2})
     assert response.status_code == 422
     assert "すでにあります" in response.json()["detail"]
 
@@ -685,9 +646,7 @@ def test_a_finished_session_frees_its_name(client):
 def test_renaming_onto_an_existing_name_is_refused(client):
     create_session(client, "午前")
     afternoon = create_session(client, "午後")
-    response = client.patch(
-        f"/api/sessions/{afternoon['token']}", json={"name": "午前"}
-    )
+    response = client.patch(f"/api/sessions/{afternoon['token']}", json={"name": "午前"})
     assert response.status_code == 422
     assert client.get(f"/api/sessions/{afternoon['token']}").json()["name"] == "午後"
 
@@ -699,9 +658,7 @@ def test_renaming_onto_an_existing_name_is_refused(client):
 
 def test_the_register_is_managed_apart_from_sessions(client):
     """台帳の追加・修正・削除は練習会と関係なくできる。"""
-    created = client.post(
-        "/api/people", json={"nickname": "たろう", "gender": "male", "level": "beginner"}
-    )
+    created = client.post("/api/people", json={"nickname": "たろう", "gender": "male", "level": "beginner"})
     assert created.status_code == 201
     person = created.json()
     assert person["source"] is None, "手で登録した人に取り込み元は無い"
@@ -715,14 +672,10 @@ def test_the_register_is_managed_apart_from_sessions(client):
 
 def test_a_participant_is_chosen_from_the_register(client):
     """参加者は台帳から選んで足す。属性は台帳から写る。"""
-    person = client.post(
-        "/api/people", json={"nickname": "はなこ", "gender": "female", "level": "beginner"}
-    ).json()
+    person = client.post("/api/people", json={"nickname": "はなこ", "gender": "female", "level": "beginner"}).json()
     session = create_session(client)
 
-    added = client.post(
-        f"/api/sessions/{session['token']}/members", json={"person_id": person["id"]}
-    )
+    added = client.post(f"/api/sessions/{session['token']}/members", json={"person_id": person["id"]})
     assert added.status_code == 201
     assert added.json()["nickname"] == "はなこ"
     assert added.json()["level"] == "beginner"
@@ -750,9 +703,7 @@ def test_removing_a_participant_keeps_the_register(client):
     assert client.get(f"/api/sessions/{session['token']}/members").json() == []
 
     person = client.get("/api/people").json()[0]
-    again = client.post(
-        f"/api/sessions/{session['token']}/members", json={"person_id": person["id"]}
-    )
+    again = client.post(f"/api/sessions/{session['token']}/members", json={"person_id": person["id"]})
     assert again.status_code == 201 and again.json()["nickname"] == "もどる"
 
 
@@ -790,9 +741,7 @@ def test_the_register_shows_what_is_needed_to_clean_up_duplicates(client):
 def test_unrelated_names_ending_in_digits_are_not_flagged(client):
     """「m1」「m2」のような別々の名前を、番号違いの同名と間違えない。"""
     for name in ("m1", "m2"):
-        client.post(
-            "/api/people", json={"nickname": name, "gender": "male", "level": "pickleball"}
-        )
+        client.post("/api/people", json={"nickname": name, "gender": "male", "level": "pickleball"})
     assert not any(p["duplicate"] for p in client.get("/api/people").json())
 
 
@@ -804,13 +753,9 @@ def test_a_person_of_another_owner_is_not_listed(client, db):
     other = Owner(name="よその団体")
     db.add(other)
     db.commit()
-    stranger = people_service.add_person(
-        db, other, nickname="よその人", gender=Gender.MALE, level=Level.PICKLEBALL
-    )
+    stranger = people_service.add_person(db, other, nickname="よその人", gender=Gender.MALE, level=Level.PICKLEBALL)
 
     assert client.get("/api/people").json() == []
     session = create_session(client)
-    response = client.post(
-        f"/api/sessions/{session['token']}/members", json={"person_id": stranger.id}
-    )
+    response = client.post(f"/api/sessions/{session['token']}/members", json={"person_id": stranger.id})
     assert response.status_code == 404

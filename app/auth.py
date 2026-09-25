@@ -41,9 +41,7 @@ def verify_password(password: str, stored: str) -> bool:
         if algorithm != _ALGORITHM:
             return False
         raw_salt = base64.urlsafe_b64decode(salt + "=" * (-len(salt) % 4))
-        expected = hashlib.pbkdf2_hmac(
-            "sha256", password.encode(), raw_salt, int(iterations)
-        )
+        expected = hashlib.pbkdf2_hmac("sha256", password.encode(), raw_salt, int(iterations))
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(_b64(expected), digest)
@@ -98,6 +96,4 @@ def cookie_matches(value: str, admin_id: int, password_hash: str) -> bool:
 
 
 def _sign(admin_id: int, password_hash: str) -> str:
-    return hmac.new(
-        password_hash.encode(), str(admin_id).encode(), hashlib.sha256
-    ).hexdigest()
+    return hmac.new(password_hash.encode(), str(admin_id).encode(), hashlib.sha256).hexdigest()

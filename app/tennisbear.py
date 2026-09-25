@@ -225,9 +225,7 @@ def parse_event_page(html: str) -> list[Participant]:
     if key < 0:
         # 存在しないイベントでも 200 が返ってくる（中身が無いだけ）ので、
         # ここに落ちる原因はたいてい ID の間違い。
-        raise UpstreamError(
-            "参加者の一覧が見つかりませんでした。イベントIDをご確認ください"
-        )
+        raise UpstreamError("参加者の一覧が見つかりませんでした。イベントIDをご確認ください")
     entries = _entries(state[key + len(_PARTICIPANTS_KEY) :])
 
     participants: list[Participant] = []
@@ -243,9 +241,7 @@ def parse_event_page(html: str) -> list[Participant]:
         if user_id is None or nickname is None or not str(user_id).isdigit():
             continue
         gender_found = re.search(r"gender:\{name:([A-Za-z_$]+|\"[^\"]*\")", entry)
-        gender_name = (
-            _literal(gender_found.group(1), variables) if gender_found else None
-        )
+        gender_name = _literal(gender_found.group(1), variables) if gender_found else None
         participants.append(
             Participant(
                 user_id=int(user_id),
@@ -266,9 +262,7 @@ def parse_event_page(html: str) -> list[Participant]:
 def fetch_event_page(event_id: int, *, base_url: str, timeout: float) -> str:
     """イベントページを取ってくる。ここだけがネットワークに触る。"""
     url = f"{base_url.rstrip('/')}/pickleball/event/{event_id}/info"
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "pickle-shuffle/0.1 (practice session tool)"}
-    )
+    request = urllib.request.Request(url, headers={"User-Agent": "pickle-shuffle/0.1 (practice session tool)"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read(MAX_PAGE_BYTES + 1)
@@ -278,8 +272,6 @@ def fetch_event_page(event_id: int, *, base_url: str, timeout: float) -> str:
     except urllib.error.HTTPError as error:
         if error.code == 404:
             raise UpstreamError(f"イベント {event_id} が見つかりませんでした") from error
-        raise UpstreamError(
-            f"イベントページを取得できませんでした（{error.code}）"
-        ) from error
+        raise UpstreamError(f"イベントページを取得できませんでした（{error.code}）") from error
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         raise UpstreamError("イベントページに接続できませんでした") from error

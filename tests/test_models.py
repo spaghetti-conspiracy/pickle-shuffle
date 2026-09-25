@@ -35,12 +35,7 @@ def _make_session(db, name: str = "練習会", court_count: int = 2) -> Practice
     s = PracticeSession(owner_id=_owner(db).id, name=name)
     db.add(s)
     db.flush()
-    db.add_all(
-        [
-            Court(session_id=s.id, court_index=i, name=f"コート{i + 1}")
-            for i in range(court_count)
-        ]
-    )
+    db.add_all([Court(session_id=s.id, court_index=i, name=f"コート{i + 1}") for i in range(court_count)])
     db.commit()
     return s
 
@@ -127,8 +122,7 @@ def test_enum_columns_round_trip_as_enum(db):
 def test_round_tree_cascade_within_session(db):
     s = _make_session(db)
     members = [
-        Member(session_id=s.id, nickname=f"m{i}", gender=Gender.FEMALE, level=Level.PICKLEBALL)
-        for i in range(4)
+        Member(session_id=s.id, nickname=f"m{i}", gender=Gender.FEMALE, level=Level.PICKLEBALL) for i in range(4)
     ]
     db.add_all(members)
     db.commit()
@@ -139,12 +133,7 @@ def test_round_tree_cascade_within_session(db):
     match = Match(round_id=rnd.id, court_id=s.courts[0].id)
     db.add(match)
     db.commit()
-    db.add_all(
-        [
-            MatchSlot(match_id=match.id, team_index=i // 2, member_id=members[i].id)
-            for i in range(4)
-        ]
-    )
+    db.add_all([MatchSlot(match_id=match.id, team_index=i // 2, member_id=members[i].id) for i in range(4)])
     db.add_all(
         [
             RoundParticipation(
@@ -178,11 +167,7 @@ def test_deleting_session_removes_everything_under_it(db):
     rnd = Round(session_id=s.id)
     db.add(rnd)
     db.commit()
-    db.add(
-        RoundParticipation(
-            round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT, level=m.level
-        )
-    )
+    db.add(RoundParticipation(round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT, level=m.level))
     db.commit()
 
     db.delete(s)
@@ -292,17 +277,9 @@ def test_participation_is_unique_per_round_and_member(db):
     rnd = Round(session_id=s.id)
     db.add(rnd)
     db.commit()
-    db.add(
-        RoundParticipation(
-            round_id=rnd.id, member_id=m.id, state=ParticipationState.PLAYED, level=m.level
-        )
-    )
+    db.add(RoundParticipation(round_id=rnd.id, member_id=m.id, state=ParticipationState.PLAYED, level=m.level))
     db.commit()
-    db.add(
-        RoundParticipation(
-            round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT, level=m.level
-        )
-    )
+    db.add(RoundParticipation(round_id=rnd.id, member_id=m.id, state=ParticipationState.SAT_OUT, level=m.level))
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()

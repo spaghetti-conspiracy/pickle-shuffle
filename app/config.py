@@ -91,9 +91,7 @@ def load_settings() -> Settings:
         database_url=os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL,
         port=_env_int("PORT", 8000),
         public_base_url=(os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/"),
-        tennisbear_base_url=(
-            os.environ.get("TENNISBEAR_BASE_URL") or DEFAULT_TENNISBEAR_URL
-        ).strip().rstrip("/"),
+        tennisbear_base_url=(os.environ.get("TENNISBEAR_BASE_URL") or DEFAULT_TENNISBEAR_URL).strip().rstrip("/"),
         tennisbear_timeout=_env_int("TENNISBEAR_TIMEOUT", 10),
         admin_password=os.environ.get("ADMIN_PASSWORD") or DEFAULT_ADMIN_PASSWORD,
         skip_db_init=_env_bool("SKIP_DB_INIT", default=False),

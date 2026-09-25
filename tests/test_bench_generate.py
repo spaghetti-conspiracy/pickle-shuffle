@@ -136,6 +136,7 @@ def test_installed_code_is_not_measured_in_place_of_the_other(tmp_path):
         ("--configs", "0x2"),
         ("--configs", "8x0"),
         ("--configs", "8x2:-1:0"),
+        ("--configs", "3x1"),
     ],
 )
 def test_a_malformed_argument_stops_with_a_message(option, value):
@@ -152,4 +153,5 @@ def test_a_malformed_argument_stops_with_a_message(option, value):
     )
     assert done.returncode == 2
     assert "Traceback" not in done.stderr
-    assert option in done.stderr
+    # usage 行には両方の引数名が必ず出るので、エラー行に絞って確かめる。
+    assert f"error: {option}:" in done.stderr

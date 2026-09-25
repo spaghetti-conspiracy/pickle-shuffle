@@ -66,7 +66,8 @@ function renderCourt(court, highlightBeginners) {
 
   const name = document.createElement("div");
   name.className = "court-name";
-  if (court.match_number !== null) {
+  // 番号の無い応答（古いサーバーなど）でも「第undefined試合」と出さない。
+  if (Number.isInteger(court.match_number)) {
     // 読み上げで「第5試合、Aコート」と呼べるよう、番号をコート名の前に置く。
     const number = document.createElement("span");
     number.className = "match-number";

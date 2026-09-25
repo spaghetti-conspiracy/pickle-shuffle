@@ -527,7 +527,7 @@ def _build_current(db: Session, session: PracticeSession, request: Request | Non
                 playing.add(member.id)
             match_by_court[match.court_id] = MatchOut(team_a=teams[0], team_b=teams[1])
 
-    number_by_court = rounds_service.match_numbers(db, round_) if round_ is not None else {}
+    number_by_court = rounds_service.match_numbers(db, round_, session.courts) if round_ is not None else {}
     waiting_count = sum(1 for m in members.values() if m.status is MemberStatus.ACTIVE and m.id not in playing)
 
     court_states = []

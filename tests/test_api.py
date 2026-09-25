@@ -849,7 +849,19 @@ def test_an_undone_round_gives_its_numbers_back(client):
     second = adopt(client, generate(client, session))
     client.post(f"/api/rounds/{second['round_id']}/undo")
     assert match_numbers(client.get(f"/api/sessions/{session['token']}/current").json()) == [1, 2]
-    assert match_numbers(generate(client, session)) == [3, 4]
+    again = generate(client, session)
+    assert match_numbers(again) == [3, 4]
+    assert match_numbers(adopt(client, again)) == [3, 4], "開始しても、取り消した回の番号をそのまま使う"
+    assert match_numbers(generate(client, session)) == [5, 6]
+
+
+def test_a_one_court_session_counts_one_per_round(client):
+    """1面の練習会では、1回ごとに番号が1つずつ進む。"""
+    session = create_session(client, court_count=1)
+    add_members(client, session["token"], 6)
+
+    assert match_numbers(adopt(client, generate(client, session))) == [1]
+    assert match_numbers(adopt(client, generate(client, session))) == [2]
 
 
 def test_a_court_without_a_match_has_no_number(client):

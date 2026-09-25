@@ -236,11 +236,9 @@ def add_member(
 
     # 下駄は参加時点の active メンバーの最小 adjusted（四捨五入した値）。これが無いと
     # 遅刻者が追いつくまで何ラウンドも連続出場してしまう。
-    actives = [
-        p
-        for p in stats.build_player_stats(db, session.id)
-        if p.status is MemberStatus.ACTIVE
-    ]
+    # 離脱から戻る人の出場回数とみなし出場も要るので、離脱済みも含めて1回で集計する。
+    everyone = stats.build_player_stats(db, session.id, include_left=True)
+    actives = [p for p in everyone if p.status is MemberStatus.ACTIVE]
     # 生成も四捨五入した値で出場者を選ぶ。下駄は整数のまま保存できる。
     baseline = min((p.adjusted_rounded for p in actives), default=0)
 
@@ -253,9 +251,8 @@ def add_member(
         # 下駄を最小値そのものにすると、離脱前の出場回数が上乗せされ、
         # その回数と同じくらいのラウンド数だけ出番が回らなくなる。
         # 離脱前の休憩で積み上がった不足は帳消しになる（途中参加と同じ扱い。ユーザー判断）。
+        own = next(p for p in everyone if p.id == already.id)
         already.status = MemberStatus.ACTIVE
-        db.flush()
-        own = next(p for p in stats.build_player_stats(db, session.id) if p.id == already.id)
         # みなし出場は同じ四捨五入で差し引く。adjusted_rounded がちょうど最小値になる
         # （端数の残り d は [-0.5, 0.5) なので、四捨五入すると 0 になる）。
         already.baseline = baseline - own.plays - round_half_up(own.rest_credit)

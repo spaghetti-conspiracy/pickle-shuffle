@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -68,6 +70,26 @@ def participation_records(
     return records
 
 
+def round_rates(
+    records: dict[int, list[tuple[int, ParticipationState]]],
+) -> dict[int, Fraction]:
+    """ラウンドごとの出場の割合（出場した人数 / 出場可能で休んでいない人数）。
+
+    休憩のみなし出場を、他の人の出場ペースで割り引くのに使う
+    （`stats_rules.count_rest_credit`）。記録から導出する（不変則2）。
+    """
+    played: dict[int, int] = {}
+    eligible: dict[int, int] = {}
+    for own in records.values():
+        for seq, state in own:
+            if state is ParticipationState.RESTING:
+                continue
+            eligible[seq] = eligible.get(seq, 0) + 1
+            if state is ParticipationState.PLAYED:
+                played[seq] = played.get(seq, 0) + 1
+    return {seq: Fraction(played.get(seq, 0), count) for seq, count in eligible.items()}
+
+
 def round_levels(db: Session, session_id: int) -> dict[int, dict[int, Level]]:
     """ラウンドごとの、そのとき記録されたレベルを返す。
 
@@ -96,12 +118,16 @@ def build_player_stats(db: Session, session_id: int) -> list[PlayerStat]:
         )
     )
     records = participation_records(db, session_id)
+    rates = round_rates(records)
 
     stats = []
     for member in members:
         own = records.get(member.id, [])
         derived = derive(
-            [state for _seq, state in own], member.status, seqs=[seq for seq, _state in own]
+            [state for _seq, state in own],
+            member.status,
+            seqs=[seq for seq, _state in own],
+            rates=[rates.get(seq, Fraction(1)) for seq, _state in own],
         )
         stats.append(
             PlayerStat(

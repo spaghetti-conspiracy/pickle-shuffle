@@ -241,7 +241,8 @@ def add_member(
         for p in stats.build_player_stats(db, session.id)
         if p.status is MemberStatus.ACTIVE
     ]
-    baseline = min((p.adjusted for p in actives), default=0)
+    # 整数部分の最小値（生成も整数部分で出場者を選ぶ）。下駄は整数のまま保存できる。
+    baseline = min((p.adjusted_whole for p in actives), default=0)
 
     if already is not None:
         # 一度外した人が戻ってきた。**新しい行は作らず、離脱した行を戻す。**

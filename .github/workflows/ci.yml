@@ -1,4 +1,4 @@
-# テストと lint。`main` への push と、すべての PR で走らせる。
+# テストと lint。`main` への push と、draft でない PR（draft を外したとき＝ready_for_review を含む）で走らせる。
 #
 # 見ているのは3つ:
 #
@@ -14,7 +14,9 @@ on:
   pull_request:
     # 既定の3つに ready_for_review を足す。draft の間は走らせないので（下の各ジョブの if）、
     # draft を外したときに走らないと、取り込める状態かを確かめられない。
-    types: [opened, synchronize, reopened, ready_for_review]
+    # converted_to_draft は、draft に戻したときに走っている実行を止めるため。全ジョブが skip される実行が立ち、
+    # 下の concurrency で同じ PR の走っている実行を止める。
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
 
 # PR に続けて push したら、古い実行は止める。
 # **main の実行は止めない。** 途中のコミットの CI が cancelled で終わると、

@@ -49,8 +49,8 @@ def test_over_a_second_on_average_is_flagged_even_without_a_comparison():
 
 
 def test_the_maximum_is_shown_but_does_not_flag():
-    """1回ごとの最大は参考として出すが、印は平均で判定する。"""
-    (row,) = bench.summarize(_runs("20名4面", [900.0]), None)
+    """1生成ごとの最大は全部の回を通した最大として出すが、印は平均で判定する。"""
+    (row,) = bench.summarize(_runs("20名4面", [900.0, 800.0, 700.0]), None)
     assert row["max"] == 1800.0
     assert row["reasons"] == []
 
@@ -78,7 +78,7 @@ class Simulator:
         pass
 
     def generate(self):
-        time.sleep(0.02)
+        time.sleep(0.25)
         return None
 
     def adopt(self, plan):
@@ -87,7 +87,10 @@ class Simulator:
 
 
 def _dummy_checkout(root: Path, *, with_app: bool = True) -> Path:
-    """1生成に 20ms かかるだけの、最小のチェックアウト。"""
+    """1生成に 250ms かかるだけの、最小のチェックアウト。
+
+    本物の 8名2面 は数十 ms なので、どちらを測ったかを見分けられる。
+    """
     (root / "tests").mkdir(parents=True)
     (root / "tests" / "simulation.py").write_text(_DUMMY_SIMULATION)
     if with_app:
@@ -105,7 +108,7 @@ def _args() -> argparse.Namespace:
 def test_the_other_checkout_is_what_gets_measured(tmp_path):
     """--against の相手は、別プロセスで相手側のコードを読み込んで測る。"""
     result = bench._run_once(_dummy_checkout(tmp_path / "other"), _args())
-    assert result["8名2面"]["mean"] >= 20
+    assert result["8名2面"]["mean"] >= 250
 
 
 def test_a_checkout_without_the_generator_is_refused(tmp_path):

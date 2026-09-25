@@ -172,7 +172,7 @@ DB と Web には依存しない。
 ### 所要時間
 
 実測（1生成あたり、単独実行。2026-09、24ラウンド x 3シードの平均）。
-`uv run python scripts/bench_generate.py` で同じ条件で測れる（既定の構成は下の表の一部）:
+`uv run python scripts/bench_generate.py` で同じ条件で測れる（既定の構成は `CLAUDE.md` の「評価する構成」と、表で最も遅いもの。16名2面は表に無い）:
 
 | | 2面 | 3面 | 4面 |
 |---|---|---|---|

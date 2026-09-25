@@ -203,10 +203,13 @@ function renderCourt(court, highlightBeginners) {
 
   // タブはコート名のままにして、選んだコートの試合の上に番号を出す。
   // 「第5試合です」と呼ばれたときに、自分の画面と照らし合わせられる。
-  const number = document.createElement("div");
-  number.className = "member-match-number";
-  number.textContent = `第${court.match_number}試合`;
-  container.append(number);
+  // 番号の無い応答（古いサーバーなど）でも「第undefined試合」と出さない。
+  if (Number.isInteger(court.match_number)) {
+    const number = document.createElement("div");
+    number.className = "member-match-number";
+    number.textContent = `第${court.match_number}試合`;
+    container.append(number);
+  }
 
   for (const [index, team] of [court.match.team_a, court.match.team_b].entries()) {
     if (index === 1) {

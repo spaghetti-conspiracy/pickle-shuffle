@@ -35,6 +35,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+MIN_PLAYERS = 4
+"""1試合の人数（``app/scheduler/generator.py`` の ``PLAYERS_PER_MATCH``）。これ未満では生成できない。"""
+
 # (人数, 面数, 初心者, ラケット経験者)。CLAUDE.md の「評価する構成」（13名・12名・16名を
 # 2面と3面で）と、表で最も遅いもの（16名3面・20名4面）、初心者入りの構成。
 DEFAULT_CONFIGS = [
@@ -150,24 +153,33 @@ def _parse_configs(text: str) -> list[tuple[int, int, int, int]]:
     """例: "12x3,13x3:3:2" → [(12, 3, 0, 0), (13, 3, 3, 2)]。読めなければ ValueError。"""
     configs = []
     for item in text.split(","):
+        if not item:
+            raise ValueError("空の項目がある（カンマが続いているか、端にある）")
         size, _, rest = item.partition(":")
         try:
             count, courts = (int(v) for v in size.split("x"))
             beginners, racket = (int(v) for v in rest.split(":")) if rest else (0, 0)
         except ValueError:
             raise ValueError(f"「{item}」は 人数x面数 か 人数x面数:初心者:ラケット経験者 の形で書く") from None
-        if count < 1 or courts < 1 or beginners < 0 or racket < 0 or beginners + racket > count:
-            raise ValueError(f"「{item}」の数が合わない（人数と面数は1以上、初心者とラケット経験者は人数の内訳）")
+        if count < MIN_PLAYERS or courts < 1 or beginners < 0 or racket < 0 or beginners + racket > count:
+            raise ValueError(
+                f"「{item}」の数が合わない（人数は{MIN_PLAYERS}以上、面数は1以上、初心者とラケット経験者は人数の内訳）"
+            )
         configs.append((count, courts, beginners, racket))
     return configs
 
 
 def _parse_seeds(text: str) -> list[int]:
     """例: "11,22,33" → [11, 22, 33]。読めなければ ValueError。"""
-    try:
-        return [int(s) for s in text.split(",")]
-    except ValueError:
-        raise ValueError(f"「{text}」は 11,22,33 のように整数をカンマで区切って書く") from None
+    seeds = []
+    for item in text.split(","):
+        if not item:
+            raise ValueError("空の項目がある（カンマが続いているか、端にある）")
+        try:
+            seeds.append(int(item))
+        except ValueError:
+            raise ValueError(f"「{item}」は整数ではない（11,22,33 のようにカンマで区切って書く）") from None
+    return seeds
 
 
 def _positive(text: str) -> int:
